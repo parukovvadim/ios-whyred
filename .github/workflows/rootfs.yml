@@ -37,6 +37,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y hfsprogs p7zip-full zstd rsync python3 cmake build-essential \
             libfuse3-dev fuse3 bzip2 libbz2-dev libattr1-dev curl
+          echo "[*] Installing kernel filesystem modules..."
+          sudo apt-get install -y linux-modules-extra-$(uname -r) || true
+          sudo modprobe hfsplus || true
+          sudo modprobe loop || true
+          lsmod | grep -E "hfs|loop" || true
+
           echo "[*] Cloning and compiling apfs-fuse..."
           git clone --recursive https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse
           mkdir -p /tmp/apfs-fuse/build
@@ -44,40 +50,40 @@ jobs:
           cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo cp apfs-fuse /usr/local/bin/
-          sudo chmod +x /usr/local/bin/apfs-fuse
+          sudo cp apfs-fuse /usr/bin/
+          sudo chmod +x /usr/local/bin/apfs-fuse /usr/bin/apfs-fuse
           apfs-fuse --help || true
 
       - name: Download IPSW and extract DMGs
         run: |
           echo "[*] Downloading IPSW from Apple CDN..."
           URL="${{ inputs.ipsw_url }}"
-          if ! curl -fSL -o restore.ipsw "$URL"; then
-            echo "[!] URL failed or 403. Resolving current URL from api.ipsw.me..."
-            URL=$(python3 -c "
-          import urllib.request, json
-          try:
-            req = urllib.request.Request('https://api.ipsw.me/v4/device/iPhone10,3?type=ipsw', headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as r:
-              data = json.loads(r.read())
-              for f in data.get('firmwares', []):
-                if f.get('buildid') == '20H392':
-                  print(f['url'])
-                  break
-          except Exception as e:
-            pass
-          ")
-            echo "[*] Resolved current URL: $URL"
-            curl -fSL -o restore.ipsw "$URL"
-          fi
+          curl -fSL -o restore.ipsw "$URL"
           echo "[*] Extracting required DMGs from IPSW..."
-          7z e restore.ipsw 087-86698-044.dmg 087-86593-047.dmg 087-86719-047.dmg
+          7z e -y restore.ipsw "*.dmg"
           rm -f restore.ipsw
           ls -lh *.dmg
 
       - name: Assemble unified HFS+ image
         run: |
+          echo "[*] Locating rootfs and cryptex DMGs..."
+          OS_DMG=$(ls -S 087-*.dmg | head -n 1)
+          SYSOS_DMG=$(ls -S 087-*.dmg | sed -n '2p')
+          APPOS_DMG=$(ls -S 087-*.dmg | grep -E '087-86719|AppOS' || ls -S 087-*.dmg | sed -n '3p')
+          echo "[*] OS DMG:     $OS_DMG"
+          echo "[*] SystemOS:   $SYSOS_DMG"
+          echo "[*] AppOS:      $APPOS_DMG"
+
+          sudo modprobe hfsplus || true
           echo "[*] Running mkiosroot.sh..."
-          sudo bash tools/mkiosroot.sh 087-86698-044.dmg 087-86593-047.dmg 087-86719-047.dmg ios16-root.img "${{ inputs.size }}"
+          sudo bash -x tools/mkiosroot.sh "$OS_DMG" "$SYSOS_DMG" "$APPOS_DMG" ios16-root.img "${{ inputs.size }}" 2>&1 | tee /tmp/mkiosroot.log || {
+            STATUS=$?
+            echo "### ❌ Step 6 Error Log (Exit $STATUS)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 150 /tmp/mkiosroot.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit $STATUS
+          }
           rm -f *.dmg
           ls -lh ios16-root.img
 
