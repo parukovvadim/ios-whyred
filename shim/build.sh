@@ -3,6 +3,11 @@
 # Supports boot image v1/v2 format expected by Xiaomi whyred ABL.
 # The payload is embedded behind the Image at a 4K boundary AND placed in the ramdisk.
 set -euo pipefail
+
+payload="${1:-}"
+if [ -n "$payload" ]; then
+	payload="$(realpath "$payload")"
+fi
 cd "$(dirname "$0")"
 
 CC=${CROSS_COMPILE:-aarch64-linux-gnu-}gcc
@@ -33,26 +38,27 @@ truncate -s "$size" out/Image
 
 # Ramdisk: an xnu payload (tools/mkpayload.py) if given as $1, else an empty
 # newc cpio (ABL dislikes a zero-size ramdisk on some builds) -> diagnostics.
-if [ -n "${1:-}" ]; then
+if [ -n "${payload}" ]; then
 	# Append payload to Image at 4K boundary (for ABLs that drop initrd)
 	truncate -s $(( (size + 0xfff) & ~0xfff )) out/Image
-	cat "$1" >> out/Image
+	cat "$payload" >> out/Image
 	python3 -c 'import os,struct,sys; f=open(sys.argv[1],"r+b"); f.seek(16); f.write(struct.pack("<Q", os.path.getsize(sys.argv[1])))' out/Image
-	cp "$1" out/ramdisk.bin
+	cp "$payload" out/ramdisk.bin
 else
 	(cd out && rm -rf rd && mkdir rd && cd rd && find . | cpio -o -H newc --quiet | gzip -9 > ../ramdisk.bin)
 fi
 
 # Wrap into Android boot.img (v2 if DTB is present, else v0 for broad whyred ABL compatibility)
 DTB_ARG=""
+HV_ARG=""
 if [ -f "../dtb/boot_unpacked/dtb" ]; then
 	DTB_ARG="--dtb ../dtb/boot_unpacked/dtb --dtb_offset 0x1f00000"
-	HV=${HEADER_VERSION:-2}
-else
-	HV=${HEADER_VERSION:-0}
+	HV_ARG="--header_version ${HEADER_VERSION:-2}"
+elif [ -n "${HEADER_VERSION:-}" ]; then
+	HV_ARG="--header_version ${HEADER_VERSION}"
 fi
 
-$MKBOOTIMG --header_version "$HV" \
+$MKBOOTIMG $HV_ARG \
 	--kernel out/Image \
 	--ramdisk out/ramdisk.bin \
 	$DTB_ARG \
