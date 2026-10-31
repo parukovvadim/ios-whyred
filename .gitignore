@@ -18,3 +18,5 @@ __pycache__/
 ccache-bin/
 temp_repo/
 temp_topaz/
+ios16/
+*.dmg

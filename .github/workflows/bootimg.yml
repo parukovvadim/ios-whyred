@@ -1,0 +1,54 @@
+name: bootimg
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "shim/**"
+      - "tools/mkadt.py"
+      - "tools/mkpayload.py"
+      - ".github/workflows/bootimg.yml"
+
+jobs:
+  build-bootimg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download XNU kernel from latest xnu workflow run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p xnu/out
+          echo "[*] Searching for latest xnu-kernel artifact..."
+          gh run download --name xnu-kernel --dir xnu/out/ || true
+          if [ ! -f "xnu/out/kernel.development.sweet" ]; then
+            echo "[!] Kernel not found via gh download. Checking if it was in subfolder..."
+            find xnu/out/ -name "kernel.development.sweet" -exec cp {} xnu/out/kernel.development.sweet \;
+          fi
+          if [ ! -f "xnu/out/kernel.development.sweet" ]; then
+            echo "ERROR: kernel.development.sweet not found! Please run the 'xnu' workflow first to build the kernel." >&2
+            exit 1
+          fi
+          ls -lh xnu/out/kernel.development.sweet
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu mkbootimg python3
+
+      - name: Assemble payload and shim-boot.img
+        run: |
+          mkdir -p shim/out
+          python3 tools/mkadt.py shim/out/whyred.adt --highmem
+          python3 tools/mkpayload.py xnu/out/kernel.development.sweet shim/out/whyred.adt shim/out/payload.bin \
+            --cmdline 'debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30 sweetfb_stayon=1'
+          bash shim/build.sh shim/out/payload.bin
+          ls -lh shim/out/shim-boot.img
+
+      - name: Upload shim-boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: whyred-boot-img
+          path: shim/out/shim-boot.img
+          retention-days: 7

@@ -43,13 +43,16 @@ else
 	(cd out && rm -rf rd && mkdir rd && cd rd && find . | cpio -o -H newc --quiet | gzip -9 > ../ramdisk.bin)
 fi
 
-# Wrap into Android boot.img v2 (or v0/v1) for whyred ABL
+# Wrap into Android boot.img (v2 if DTB is present, else v0 for broad whyred ABL compatibility)
 DTB_ARG=""
 if [ -f "../dtb/boot_unpacked/dtb" ]; then
 	DTB_ARG="--dtb ../dtb/boot_unpacked/dtb --dtb_offset 0x1f00000"
+	HV=${HEADER_VERSION:-2}
+else
+	HV=${HEADER_VERSION:-0}
 fi
 
-$MKBOOTIMG --header_version ${HEADER_VERSION:-2} \
+$MKBOOTIMG --header_version "$HV" \
 	--kernel out/Image \
 	--ramdisk out/ramdisk.bin \
 	$DTB_ARG \

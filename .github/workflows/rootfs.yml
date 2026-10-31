@@ -1,0 +1,92 @@
+name: rootfs
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipsw_url:
+        description: 'Direct Apple CDN URL for iPhone X (iPhone10,3) 16.7.16 IPSW'
+        default: 'https://updates.cdn-apple.com/2024FallFCS/fullrestores/072-23744/E1EDAA2E-442B-460B-902F-DF51BF4EF49D/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw'
+        required: true
+      size:
+        description: 'Target HFS+ size (e.g. 14G, 16G)'
+        default: '14G'
+        required: true
+
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo docker system prune -af || true
+          sudo apt-get clean
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apfs-fuse hfsprogs android-sdk-libsparse-utils p7zip-full zstd rsync python3
+
+      - name: Download IPSW and extract DMGs
+        run: |
+          echo "[*] Downloading IPSW from Apple CDN..."
+          curl -fSL -o restore.ipsw "${{ inputs.ipsw_url }}"
+          echo "[*] Extracting required DMGs..."
+          7z e restore.ipsw 087-86698-044.dmg 087-86593-047.dmg 087-86719-047.dmg
+          rm -f restore.ipsw
+          ls -lh *.dmg
+
+      - name: Assemble unified HFS+ image
+        run: |
+          echo "[*] Running mkiosroot.sh..."
+          sudo bash tools/mkiosroot.sh 087-86698-044.dmg 087-86593-047.dmg 087-86719-047.dmg ios16-root.img "${{ inputs.size }}"
+          rm -f *.dmg
+          ls -lh ios16-root.img
+
+      - name: Apply whyred root tweaks
+        run: |
+          echo "[*] Applying tweaks (skip setup, hactivation, watchdog bypass)..."
+          sudo fsck.hfsplus -fy ios16-root.img || true
+          mkdir -p mnt_ios
+          sudo mount -t hfsplus -o loop,force ios16-root.img mnt_ios
+          sudo python3 tools/whyred-root-tweaks.py mnt_ios
+          sudo umount mnt_ios
+          sudo fsck.hfsplus -fn ios16-root.img
+
+      - name: Convert to Android Sparse Image
+        run: |
+          echo "[*] Converting to sparse image (img2simg)..."
+          img2simg ios16-root.img ios16-root.simg
+          rm -f ios16-root.img
+          ls -lh ios16-root.simg
+
+      - name: Compress with zstd
+        run: |
+          echo "[*] Compressing with zstd..."
+          zstd -T0 -8 ios16-root.simg -o ios16-root.simg.zst
+          rm -f ios16-root.simg
+          ls -lh ios16-root.simg.zst
+
+      - name: Split archive into < 2GB parts
+        run: |
+          mkdir -p out_rootfs
+          split -b 1800M ios16-root.simg.zst out_rootfs/ios16-root.simg.zst.part_
+          rm -f ios16-root.simg.zst
+          ls -lh out_rootfs/
+
+      - name: Upload Rootfs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios16-whyred-rootfs
+          path: out_rootfs/
+          retention-days: 7

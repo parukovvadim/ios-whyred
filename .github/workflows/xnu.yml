@@ -153,3 +153,35 @@ jobs:
           name: xnu-kernel
           path: out/
           if-no-files-found: warn
+
+shim-boot:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download XNU kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xnu-kernel
+          path: xnu/out/
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu mkbootimg python3
+
+      - name: Assemble payload and shim-boot.img
+        run: |
+          mkdir -p shim/out
+          python3 tools/mkadt.py shim/out/whyred.adt --highmem
+          python3 tools/mkpayload.py xnu/out/kernel.development.sweet shim/out/whyred.adt shim/out/payload.bin \
+            --cmdline 'debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30 sweetfb_stayon=1'
+          bash shim/build.sh shim/out/payload.bin
+          ls -lh shim/out/shim-boot.img
+
+      - name: Upload bootable image
+        uses: actions/upload-artifact@v4
+        with:
+          name: whyred-boot-img
+          path: shim/out/shim-boot.img
