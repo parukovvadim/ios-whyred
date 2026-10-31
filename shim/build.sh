@@ -70,7 +70,7 @@ $MKBOOTIMG $HV_ARG \
 	$DTB_ARG \
 	--base 0x80000000 \
 	--kernel_offset 0x8000 \
-	--ramdisk_offset 0x1000000 \
+	--ramdisk_offset 0x2000000 \
 	--tags_offset 0x100 \
 	--pagesize 4096 \
 	--os_version 9.0.0 \
