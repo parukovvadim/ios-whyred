@@ -14,7 +14,13 @@ CC=${CROSS_COMPILE:-aarch64-linux-gnu-}gcc
 OBJCOPY=${CROSS_COMPILE:-aarch64-linux-gnu-}objcopy
 NM=${CROSS_COMPILE:-aarch64-linux-gnu-}nm
 READELF=${CROSS_COMPILE:-aarch64-linux-gnu-}readelf
-MKBOOTIMG=${MKBOOTIMG:-mkbootimg}
+if [ -z "${MKBOOTIMG:-}" ]; then
+	if [ -f "../tools/mkbootimg.py" ]; then
+		MKBOOTIMG="python3 ../tools/mkbootimg.py"
+	else
+		MKBOOTIMG="mkbootimg"
+	fi
+fi
 
 CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra"
 mkdir -p out

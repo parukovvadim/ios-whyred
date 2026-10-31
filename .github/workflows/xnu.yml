@@ -178,11 +178,11 @@ jobs:
         run: |
           mkdir -p shim/out
           python3 tools/mkadt.py shim/out/whyred.adt --highmem
-          KERNEL="xnu/out/kernel.development.whyred"
-          [ -f "$KERNEL" ] || KERNEL="xnu/out/kernel.development.sweet"
+          KERNEL=$(find xnu/out/ -name "kernel.development.*" | head -n 1)
+          echo "[*] Using kernel: $KERNEL"
           python3 tools/mkpayload.py "$KERNEL" shim/out/whyred.adt shim/out/payload.bin \
             --cmdline 'debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30 sweetfb_stayon=1'
-          bash shim/build.sh shim/out/payload.bin
+          bash -x shim/build.sh shim/out/payload.bin
           ls -lh shim/out/shim-boot.img
 
       - name: Upload bootable image
