@@ -63,9 +63,17 @@ sudo mount -t hfsplus -o loop,force "$out" "$work/root"
 mounts=("$work/root" "${mounts[@]}")
 
 copy() {
-	echo "copying $1 -> ${2#"$work/root"}"
+	local src="$1"
+	if [ ! -d "$src" ]; then
+		local mount_dir="$(dirname "$src")"
+		local first_dir=$(sudo find "$mount_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+		if [ -n "$first_dir" ] && sudo test -d "$first_dir"; then
+			src="$first_dir"
+		fi
+	fi
+	echo "copying $src -> ${2#"$work/root"}"
 	sudo mkdir -p "$2"
-	sudo rsync -aH --numeric-ids "$1/" "$2/"
+	sudo rsync -aH --numeric-ids "$src/" "$2/"
 }
 copy "$work/os/root" "$work/root"
 copy "$work/sysos/root" "$work/root/private/preboot/Cryptexes/OS"

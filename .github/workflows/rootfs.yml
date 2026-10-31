@@ -32,10 +32,20 @@ jobs:
           echo "=== Disk space after cleanup ==="
           df -h
 
-      - name: Install dependencies
+      - name: Install dependencies and build apfs-fuse
         run: |
           sudo apt-get update
-          sudo apt-get install -y apfs-fuse hfsprogs android-sdk-libsparse-utils p7zip-full zstd rsync python3
+          sudo apt-get install -y hfsprogs p7zip-full zstd rsync python3 cmake build-essential \
+            libfuse3-dev fuse3 bzip2 libbz2-dev libattr1-dev curl
+          echo "[*] Cloning and compiling apfs-fuse..."
+          git clone --recursive https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse
+          mkdir -p /tmp/apfs-fuse/build
+          cd /tmp/apfs-fuse/build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+          sudo cp apfs-fuse /usr/local/bin/
+          sudo chmod +x /usr/local/bin/apfs-fuse
+          apfs-fuse --help || true
 
       - name: Download IPSW and extract DMGs
         run: |
@@ -65,8 +75,8 @@ jobs:
 
       - name: Convert to Android Sparse Image
         run: |
-          echo "[*] Converting to sparse image (img2simg)..."
-          img2simg ios16-root.img ios16-root.simg
+          echo "[*] Converting to sparse image (img2simg.py)..."
+          python3 tools/img2simg.py ios16-root.img ios16-root.simg
           rm -f ios16-root.img
           ls -lh ios16-root.simg
 
