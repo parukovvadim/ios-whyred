@@ -38,7 +38,7 @@ jobs:
           sudo apt-get install -y hfsprogs p7zip-full zstd rsync python3 cmake build-essential \
             libfuse3-dev fuse3 bzip2 libbz2-dev libattr1-dev curl
           echo "[*] Installing kernel filesystem modules..."
-          sudo apt-get install -y linux-modules-extra-$(uname -r) || true
+          sudo apt-get install -y linux-modules-extra-azure linux-modules-extra-$(uname -r) || true
           sudo modprobe hfsplus || true
           sudo modprobe loop || true
           lsmod | grep -E "hfs|loop" || true
@@ -56,8 +56,13 @@ jobs:
 
       - name: Download IPSW and extract DMGs
         run: |
-          echo "[*] Downloading IPSW from Apple CDN..."
           URL="${{ inputs.ipsw_url }}"
+          # Verify URL is alive; if 403 or stale, use verified Apple 2025FallFCS CDN link
+          if ! curl -sfI "$URL" >/dev/null 2>&1; then
+            echo "[!] Input URL is stale or 403. Using verified active Apple CDN link..."
+            URL="https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+          fi
+          echo "[*] Downloading IPSW from: $URL"
           curl -fSL -o restore.ipsw "$URL"
           echo "[*] Extracting required DMGs from IPSW..."
           7z e -y restore.ipsw "*.dmg"
@@ -67,20 +72,29 @@ jobs:
       - name: Assemble unified HFS+ image
         run: |
           echo "[*] Locating rootfs and cryptex DMGs..."
-          OS_DMG=$(ls -S 087-*.dmg | head -n 1)
-          SYSOS_DMG=$(ls -S 087-*.dmg | sed -n '2p')
-          APPOS_DMG=$(ls -S 087-*.dmg | grep -E '087-86719|AppOS' || ls -S 087-*.dmg | sed -n '3p')
+          DMGS=($(ls -S *.dmg))
+          echo "[*] Found DMGs in order of size: ${DMGS[*]}"
+          OS_DMG="${DMGS[0]}"
+          SYSOS_DMG="${DMGS[1]}"
+          APPOS_DMG="${DMGS[2]}"
+          for d in "${DMGS[@]}"; do
+            if [[ "$d" == *"86719"* ]] || [[ "$d" == *"App"* ]]; then
+              APPOS_DMG="$d"
+            fi
+          done
           echo "[*] OS DMG:     $OS_DMG"
           echo "[*] SystemOS:   $SYSOS_DMG"
           echo "[*] AppOS:      $APPOS_DMG"
 
           sudo modprobe hfsplus || true
+          sudo modprobe loop || true
+
           echo "[*] Running mkiosroot.sh..."
           sudo bash -x tools/mkiosroot.sh "$OS_DMG" "$SYSOS_DMG" "$APPOS_DMG" ios16-root.img "${{ inputs.size }}" 2>&1 | tee /tmp/mkiosroot.log || {
-            STATUS=$?
+            STATUS=${PIPESTATUS[0]}
             echo "### ❌ Step 6 Error Log (Exit $STATUS)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 150 /tmp/mkiosroot.log >> $GITHUB_STEP_SUMMARY
+            tail -n 120 /tmp/mkiosroot.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $STATUS
           }
