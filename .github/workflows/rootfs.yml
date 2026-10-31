@@ -64,24 +64,45 @@ jobs:
           fi
           echo "[*] Downloading IPSW from: $URL"
           curl -fSL -o restore.ipsw "$URL"
-          echo "[*] Extracting required DMGs from IPSW..."
-          7z e -y restore.ipsw "*.dmg"
-          rm -f restore.ipsw
+
+          echo "[*] Extracting BuildManifest.plist..."
+          7z e -y restore.ipsw BuildManifest.plist
+
+          python3 -c "
+          import plistlib, sys
+          with open('BuildManifest.plist', 'rb') as f:
+              manifest = plistlib.load(f)
+          os_dmg, sysos_dmg, appos_dmg = None, None, None
+          for bi in manifest.get('BuildIdentities', []):
+              m = bi.get('Manifest', {})
+              if not os_dmg and 'OS' in m:
+                  os_dmg = m['OS'].get('Info', {}).get('Path')
+              if not sysos_dmg and 'Cryptex1,SystemOS' in m:
+                  sysos_dmg = m['Cryptex1,SystemOS'].get('Info', {}).get('Path')
+              if not appos_dmg and 'Cryptex1,AppOS' in m:
+                  appos_dmg = m['Cryptex1,AppOS'].get('Info', {}).get('Path')
+              if os_dmg and sysos_dmg and appos_dmg:
+                  break
+          if not (os_dmg and sysos_dmg and appos_dmg):
+              print('Failed to identify required DMGs in BuildManifest.plist', file=sys.stderr)
+              sys.exit(1)
+          print(f'OS_DMG={os_dmg}')
+          print(f'SYSOS_DMG={sysos_dmg}')
+          print(f'APPOS_DMG={appos_dmg}')
+          with open('dmg_names.env', 'w') as out:
+              out.write(f'OS_DMG={os_dmg}\nSYSOS_DMG={sysos_dmg}\nAPPOS_DMG={appos_dmg}\n')
+          "
+          cat dmg_names.env
+          source dmg_names.env
+
+          echo "[*] Extracting ONLY required APFS DMGs ($OS_DMG, $SYSOS_DMG, $APPOS_DMG)..."
+          7z e -y restore.ipsw "$OS_DMG" "$SYSOS_DMG" "$APPOS_DMG"
+          rm -f restore.ipsw BuildManifest.plist
           ls -lh *.dmg
 
       - name: Assemble unified HFS+ image
         run: |
-          echo "[*] Locating rootfs and cryptex DMGs..."
-          DMGS=($(ls -S *.dmg))
-          echo "[*] Found DMGs in order of size: ${DMGS[*]}"
-          OS_DMG="${DMGS[0]}"
-          SYSOS_DMG="${DMGS[1]}"
-          APPOS_DMG="${DMGS[2]}"
-          for d in "${DMGS[@]}"; do
-            if [[ "$d" == *"86719"* ]] || [[ "$d" == *"App"* ]]; then
-              APPOS_DMG="$d"
-            fi
-          done
+          source dmg_names.env
           echo "[*] OS DMG:     $OS_DMG"
           echo "[*] SystemOS:   $SYSOS_DMG"
           echo "[*] AppOS:      $APPOS_DMG"
@@ -90,15 +111,16 @@ jobs:
           sudo modprobe loop || true
 
           echo "[*] Running mkiosroot.sh..."
-          sudo bash -x tools/mkiosroot.sh "$OS_DMG" "$SYSOS_DMG" "$APPOS_DMG" ios16-root.img "${{ inputs.size }}" 2>&1 | tee /tmp/mkiosroot.log || {
-            STATUS=${PIPESTATUS[0]}
-            echo "### ❌ Step 6 Error Log (Exit $STATUS)" >> $GITHUB_STEP_SUMMARY
+          sudo bash -x tools/mkiosroot.sh "$OS_DMG" "$SYSOS_DMG" "$APPOS_DMG" ios16-root.img "${{ inputs.size }}" 2>&1 | tee /tmp/mkiosroot.log
+          STATUS=${PIPESTATUS[0]}
+          if [ $STATUS -ne 0 ]; then
+            echo "### ❌ mkiosroot.sh Failed (Exit Code $STATUS)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 120 /tmp/mkiosroot.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $STATUS
-          }
-          rm -f *.dmg
+          fi
+          rm -f *.dmg dmg_names.env
           ls -lh ios16-root.img
 
       - name: Apply whyred root tweaks

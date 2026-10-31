@@ -19,7 +19,7 @@
 set -euo pipefail
 
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
-os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
+os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$(realpath -m "$4") size=${5:-16G}
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
 
 work=$(mktemp -d)
@@ -28,7 +28,7 @@ cleanup() {
 	local busy=0
 	for m in "${mounts[@]}"; do
 		if mountpoint -q "$m"; then
-			sudo umount "$m" 2>/dev/null || true
+			sudo umount "$m" 2>/dev/null || sudo umount -l "$m" 2>/dev/null || true
 		fi
 		mountpoint -q "$m" && busy=1
 	done
@@ -51,10 +51,14 @@ apfs_mount() {
 	local apfs_bin
 	apfs_bin="$(command -v apfs-fuse 2>/dev/null || echo '/usr/local/bin/apfs-fuse')"
 	[ -x "$apfs_bin" ] || apfs_bin="/usr/bin/apfs-fuse"
-	echo "[*] Mounting $1 to $work/$2 with $apfs_bin..."
+	echo "[*] Mounting $1 ($2) to $work/$2 with $apfs_bin..."
 	sudo "$apfs_bin" "$work/$2.dmg" "$work/$2"
 	sleep 1
 	mounts+=("$work/$2")
+	if ! mountpoint -q "$work/$2"; then
+		echo "[-] Warning: $work/$2 is not registered as mountpoint yet"
+	fi
+	ls -la "$work/$2" || true
 }
 apfs_mount "$os" os
 apfs_mount "$sysos" sysos
@@ -68,14 +72,20 @@ mounts=("$work/root" "${mounts[@]}")
 
 copy() {
 	local src="$1"
+	local mount_dir="$(dirname "$src")"
 	if [ ! -d "$src" ]; then
-		local mount_dir="$(dirname "$src")"
-		local first_dir=$(sudo find "$mount_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-		if [ -n "$first_dir" ] && sudo test -d "$first_dir"; then
-			src="$first_dir"
+		# Check if mount_dir directly contains the filesystem (e.g. System, Library, bin)
+		if sudo test -d "$mount_dir/System" || sudo test -d "$mount_dir/bin" || sudo test -d "$mount_dir/Applications"; then
+			src="$mount_dir"
+		else
+			local first_dir
+			first_dir=$(sudo find "$mount_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+			if [ -n "$first_dir" ] && sudo test -d "$first_dir"; then
+				src="$first_dir"
+			fi
 		fi
 	fi
-	echo "copying $src -> ${2#"$work/root"}"
+	echo "[*] Copying $src -> ${2#"$work/root"}"
 	sudo mkdir -p "$2"
 	sudo rsync -aH --numeric-ids "$src/" "$2/"
 }
@@ -86,25 +96,30 @@ copy "$work/appos/root" "$work/root/private/preboot/Cryptexes/App"
 # Shared cache where dyld looks at ignition level 1: hard links, no extra space.
 dsc=private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld
 sudo mkdir -p "$work/root/System/Library/Caches/com.apple.dyld"
-for f in "$work/root/$dsc"/*; do
-	sudo ln "$f" "$work/root/System/Library/Caches/com.apple.dyld/${f##*/}"
-done
+if [ -d "$work/root/$dsc" ]; then
+	for f in "$work/root/$dsc"/*; do
+		[ -e "$f" ] || continue
+		sudo ln -f "$f" "$work/root/System/Library/Caches/com.apple.dyld/${f##*/}"
+	done
+fi
 
 # dyld does not search the cryptexes at ignition level 1: hard-link every
 # cryptex file that has no counterpart in the OS root (libobjc-trampolines,
 # libffi-trampolines, libstdc++, ...) to its root path.
 for c in OS App; do
-	(cd "$work/root/private/preboot/Cryptexes/$c" && sudo find . ! -type d ! -path './System/Library/Caches/com.apple.dyld/*') |
-	while IFS= read -r f; do
-		f=${f#./}
-		if ! sudo test -e "$work/root/$f" && ! sudo test -L "$work/root/$f"; then
-			sudo mkdir -p "$work/root/$(dirname "$f")"
-			src="$work/root/private/preboot/Cryptexes/$c/$f"
-			# Linux hfsplus cannot hard-link symlinks: copy those.
-			if sudo test -L "$src"; then sudo cp -P "$src" "$work/root/$f"; else sudo ln "$src" "$work/root/$f"; fi
-			echo "linked $c:/$f"
-		fi
-	done
+	if [ -d "$work/root/private/preboot/Cryptexes/$c" ]; then
+		(cd "$work/root/private/preboot/Cryptexes/$c" && sudo find . ! -type d ! -path './System/Library/Caches/com.apple.dyld/*') |
+		while IFS= read -r f; do
+			f=${f#./}
+			if ! sudo test -e "$work/root/$f" && ! sudo test -L "$work/root/$f"; then
+				sudo mkdir -p "$work/root/$(dirname "$f")"
+				src="$work/root/private/preboot/Cryptexes/$c/$f"
+				# Linux hfsplus cannot hard-link symlinks: copy those.
+				if sudo test -L "$src"; then sudo cp -P "$src" "$work/root/$f"; else sudo ln -f "$src" "$work/root/$f"; fi
+				echo "linked $c:/$f"
+			fi
+		done
+	fi
 done
 
 # logd's log stores, normally made at restore: it checks owner _logd (272)
@@ -128,5 +143,5 @@ df -h "$work/root"
 sudo umount "$work/root"
 # Linux hfsplus decomposes some non-ASCII names (localized Shortcuts examples)
 # differently from Apple's tables; let fsck_hfs rewrite them, then verify.
-fsck.hfsplus -f -y "$out" | grep -v 'Illegal name' || true
-fsck.hfsplus -f -n "$out"
+sudo fsck.hfsplus -f -y "$out" | grep -v 'Illegal name' || true
+sudo fsck.hfsplus -f -n "$out"
