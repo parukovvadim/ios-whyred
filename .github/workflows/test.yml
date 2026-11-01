@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Ubuntu works"
-  test-macos:
-    runs-on: macos-latest
+  test-macos-14:
+    runs-on: macos-14
     steps:
-      - run: echo "macOS works"
+      - run: echo "macos-14 works"
