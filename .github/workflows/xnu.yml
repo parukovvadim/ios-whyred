@@ -86,11 +86,7 @@ jobs:
           for bin in cc clang clang++; do
             if [ -f "$TBIN/$bin" ] && [ ! -f "$TBIN/$bin.real" ]; then
               sudo mv "$TBIN/$bin" "$TBIN/$bin.real"
-              sudo tee "$TBIN/$bin" << 'WRAP'
-#!/bin/sh
-unset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET
-exec "$(dirname "$0")/$(basename "$0").real" "$@"
-WRAP
+              printf '#!/bin/sh\nunset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET\nexec "$(dirname "$0")/$(basename "$0").real" "$@"\n' | sudo tee "$TBIN/$bin" >/dev/null
               sudo chmod +x "$TBIN/$bin"
             fi
           done
