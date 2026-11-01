@@ -61,6 +61,8 @@ jobs:
           # (clang's apple-m1 default emits LSE atomics and LDAPR)
           sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="arm64" VALID_ARCHS="arm64" OTHER_CFLAGS="-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53"/' dxb/build.sh
           grep -c 'OTHER_CFLAGS="-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53"' dxb/build.sh
+          # Build host tools (mig, dtrace) as arm64-only to avoid x86_64 ld failure on Apple Silicon
+          sed -i '' 's/ARCHS="arm64 x86_64"/ARCHS="arm64"/g' dxb/build.sh
           # xnu's makedefs take CC/CXX from the environment dxb exports; xcodebuild
           # (mig, ctf tools) needs a single executable, so point at wrappers
           sed -i '' 's|export CC="$(xcrun -find clang)"|export CC="$CCACHE_WRAP/clang"|; s|export CXX="$(xcrun -find clang++)"|export CXX="$CCACHE_WRAP/clang++"|' dxb/build.sh
@@ -81,19 +83,17 @@ jobs:
           xcodebuild -version
           xcrun --find iig
 
-          # Fix Xcode 26+ conflicting deployment targets (DRIVERKIT 25.0 vs MACOSX 26.0) in mig/cc
+          # Fix Xcode 26+ conflicting deployment targets (DRIVERKIT 25.0 vs MACOSX 26.0) in mig preprocessor
           TBIN="$XC/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
-          for bin in cc clang clang++; do
-            if [ -f "$TBIN/$bin" ] && [ ! -f "$TBIN/$bin.real" ]; then
-              sudo mv "$TBIN/$bin" "$TBIN/$bin.real"
-              printf '#!/bin/sh\nunset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET\nexec "$(dirname "$0")/$(basename "$0").real" "$@"\n' | sudo tee "$TBIN/$bin" >/dev/null
-              sudo chmod +x "$TBIN/$bin"
-            fi
-          done
+          if [ -L "$TBIN/cc" ] || [ -f "$TBIN/cc" ]; then
+            sudo rm -f "$TBIN/cc"
+            printf '#!/bin/sh\nunset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET\nexec "$(dirname "$0")/clang" "$@"\n' | sudo tee "$TBIN/cc" >/dev/null
+            sudo chmod +x "$TBIN/cc"
+          fi
 
           mkdir -p "$CCACHE_WRAP"
           for t in clang clang++; do
-            printf '#!/bin/sh\nunset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET\nexec ccache %s "$@"\n' "$(xcrun -find $t)" > "$CCACHE_WRAP/$t"
+            printf '#!/bin/sh\nunset DRIVERKIT_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET ANDROID_DEPLOYMENT_TARGET\nexec ccache "%s" "$@"\n' "$(xcrun -find $t)" > "$CCACHE_WRAP/$t"
             chmod +x "$CCACHE_WRAP/$t"
           done
           cat "$CCACHE_WRAP/clang"
