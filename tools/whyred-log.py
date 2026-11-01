@@ -10,11 +10,13 @@ the ring follows. Byte n of the console stream is at ring offset n % size.
 """
 import struct, sys
 
+# Block size of the device driver: 512 for eMMC (whyred), 4096 for the UFS original.
+BLOCK = int(__import__('os').environ.get('SWEET_LOG_BLOCK', '512'))
 data = open(sys.argv[1], 'rb').read()
 magic, version, size, total, seq = struct.unpack_from('<8sIIQQ', data, 0)
 if magic != b'SWEETLOG':
     sys.exit('no SWEETLOG header (log never flushed, or wrong area)')
-ring = data[4096:4096 + size]
+ring = data[BLOCK:BLOCK + size]
 if total <= size:
     text = ring[:total]
 else:

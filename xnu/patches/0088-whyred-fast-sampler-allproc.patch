@@ -1,0 +1,37 @@
+--- a/bsd/dev/sweet_sample.c
++++ b/bsd/dev/sweet_sample.c
+@@ -51,7 +51,8 @@
+ {
+ 	char name[32];
+ 	proc_name(proc_pid(p), name, sizeof(name));
+-	if (sweet_sample_wanted(name)) {
++	printf("SMP proc: [%d] '%s'\n", proc_pid(p), name);
++	if (strcmp(sweet_sample_names, "*") == 0 || sweet_sample_wanted(name)) {
+ 		task_t task = proc_task(p);
+ 		if (task != TASK_NULL) {
+ 			sweet_sample_task(name, proc_pid(p), task);
+@@ -67,9 +68,9 @@
+ 	if (sweet_sample_names[0] == '-') {
+ 		return;
+ 	}
+-	(void)tsleep(&chan, PZERO, "sweetsmp", 90 * hz);
++	(void)tsleep(&chan, PZERO, "sweetsmp", 5 * hz);
+ 	for (int i = 0; i < 40; i++) {
+ 		printf("SMP --- sample %d\n", i);
+ 		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
+-		(void)tsleep(&chan, PZERO, "sweetsmp", 120 * hz);
++		(void)tsleep(&chan, PZERO, "sweetsmp", 5 * hz);
+ 	}
+ }
+--- a/bsd/dev/mem.c
++++ b/bsd/dev/mem.c
+@@ -175,6 +175,9 @@
+ 		sweet_null_parsed = 1;
+ 	}
+ 	proc_selfname(name, (int)len);
++	if (strcmp(sweet_null_names, "*") == 0) {
++		return true;
++	}
+ 	size_t n = strlen(name);
+ 	for (const char *t = sweet_null_names; *t;) {
+ 		const char *end = strchr(t, ',');
