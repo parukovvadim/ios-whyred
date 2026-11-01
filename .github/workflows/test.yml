@@ -8,8 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Ubuntu works"
-  test-macos-latest:
-    runs-on: macos-latest
+  test-macos-13:
+    runs-on: macos-13
     steps:
       - run: |
           sw_vers
