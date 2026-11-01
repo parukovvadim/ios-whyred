@@ -1,0 +1,98 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -362,11 +362,95 @@
+ 	return ENOENT;
+ }
+ 
++/*
++ * whyred: the "UFS" window at /sweet-ufs is really the Qualcomm SDHCI (eMMC)
++ * host. Diagnostics only: dump what the bootloader left in it and try one
++ * polled PIO CMD17 read of sector 1 (the GPT header, "EFI PART"). Read-only.
++ */
++static bool
++sd_wait_any(uint32_t off, uint32_t mask, uint64_t ns)
++{
++	uint64_t deadline;
++	nanoseconds_to_absolutetime(ns, &deadline);
++	deadline += mach_absolute_time();
++	while (!(ufs_rd(off) & mask)) {
++		if (mach_absolute_time() > deadline) {
++			return false;
++		}
++		delay(1);
++	}
++	return true;
++}
++
++static void
++sweet_sdhci_diag(void)
++{
++	printf("SWEET SDHCI: STATE %08x HC %08x CLK %08x ISTS %08x\n",
++	    ufs_rd(0x24), ufs_rd(0x28), ufs_rd(0x2c), ufs_rd(0x30));
++	printf("SWEET SDHCI: IEN %08x ISIG %08x HC2 %08x VER %08x\n",
++	    ufs_rd(0x34), ufs_rd(0x38), ufs_rd(0x3c), ufs_rd(0xfc));
++	printf("SWEET SDHCI: CAP0 %08x CAP1 %08x BLK %08x RESP0 %08x\n",
++	    ufs_rd(0x40), ufs_rd(0x44), ufs_rd(0x04), ufs_rd(0x10));
++	printf("SWEET SDHCI: HCMODE %08x VSPEC %08x DLLCFG %08x DLLSTS %08x\n",
++	    ufs_rd(0x78), ufs_rd(0x10c), ufs_rd(0x100), ufs_rd(0x108));
++
++	uint64_t deadline;
++	nanoseconds_to_absolutetime(100ull * NSEC_PER_MSEC, &deadline);
++	deadline += mach_absolute_time();
++	while (ufs_rd(0x24) & 3) {              /* CMD/DAT inhibit */
++		if (mach_absolute_time() > deadline) {
++			printf("SWEET SDHCI: inhibit stuck, state %08x\n", ufs_rd(0x24));
++			return;
++		}
++		delay(1);
++	}
++	ufs_wr(0x30, 0xffffffff);
++	ufs_wr(0x04, (1u << 16) | 512u);        /* one 512-byte block */
++	ufs_wr(0x08, 1);                        /* sector 1 */
++	ufs_wr(0x0c, (((17u << 8) | 0x3au) << 16) | 0x10u);  /* CMD17, R1, data, read */
++	if (!sd_wait_any(0x30, 1u | (1u << 15), 500ull * NSEC_PER_MSEC)) {
++		printf("SWEET SDHCI: CMD17 no response, ISTS %08x\n", ufs_rd(0x30));
++		return;
++	}
++	uint32_t ists = ufs_rd(0x30);
++	if (ists & (1u << 15)) {
++		printf("SWEET SDHCI: CMD17 error, ISTS %08x\n", ists);
++		return;
++	}
++	ufs_wr(0x30, 1u);
++	if (!sd_wait_any(0x30, (1u << 5) | (1u << 15), 500ull * NSEC_PER_MSEC)) {
++		printf("SWEET SDHCI: no buffer-read-ready, ISTS %08x\n", ufs_rd(0x30));
++		return;
++	}
++	ists = ufs_rd(0x30);
++	if (ists & (1u << 15)) {
++		printf("SWEET SDHCI: data error, ISTS %08x\n", ists);
++		return;
++	}
++	uint32_t w[128];
++	ufs_wr(0x30, 1u << 5);
++	for (int i = 0; i < 128; i++) {
++		w[i] = ufs_rd(0x20);
++	}
++	char m[9];
++	memcpy(m, w, 8);
++	for (int i = 0; i < 8; i++) {
++		if (m[i] < 32 || m[i] > 126) {
++			m[i] = '.';
++		}
++	}
++	m[8] = 0;
++	printf("SWEET SDHCI: sector 1: \"%s\" %08x %08x %08x\n", m, w[0], w[1], w[2]);
++	(void)sd_wait_any(0x30, 2u, 500ull * NSEC_PER_MSEC);   /* transfer complete */
++	ufs_wr(0x30, 0xffffffff);
++}
++
+ static int
+ ufs_take_over_host(void)
+ {
+ 	uint32_t hce = ufs_rd(REG_HCE), hcs = ufs_rd(REG_HCS);
+ 	if (!(hce & 1) || !(hcs & HCS_DP) || !(hcs & HCS_UTRLRDY)) {
++		sweet_sdhci_diag();
+ 		printf("SWEET UFS: host not ready (hce 0x%x hcs 0x%x)\n", hce, hcs);
+ 		return ENXIO;
+ 	}
