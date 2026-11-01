@@ -1,6 +1,8 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6b926fe..a8bcc4e 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -69,7 +69,19 @@
+@@ -69,7 +69,19 @@ extern void sweet_usb_probe(void);
  #define HCS_UTRLRDY     (1u << 1)
  #define CAP_64AS        (1u << 24)              /* 64-bit DMA addressing */
  
@@ -21,7 +23,7 @@
  #define BOUNCE_SIZE     (1u << 20)
  #define PRDT_CHUNK      (256u << 10)            /* PRDT byte count field: 18 bits */
  #define PRDT_MAX        (BOUNCE_SIZE / PRDT_CHUNK)
-@@ -142,133 +154,167 @@
+@@ -142,133 +154,181 @@ dma_clean(uint32_t off, uint32_t len)
  }
  
  /*
@@ -33,7 +35,9 @@
   */
 -static int
 -ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
--{
++static void
++sd_reset_lines(void)
+ {
 -	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
 -	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
 -	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
@@ -65,20 +69,6 @@
 -			ucd->prdt[n].addr_lo = (uint32_t)(bounce_pa + done);
 -			ucd->prdt[n].addr_hi = (uint32_t)((bounce_pa + done) >> 32);
 -			ucd->prdt[n].dbc = chunk - 1;
--		}
--		utrd->prdt = (1024u / 4) << 16 | n;
--	}
--
--	if (su.cache) {
--		dma_clean(DMA_UTRL, sizeof(*utrd));
--		dma_clean(DMA_UCD, 16 + cdb_len);
--		dma_sync(DMA_UCD + offsetof(struct ucd, resp), sizeof(ucd->resp));
--		if (len) {
--			dma_clean(DMA_UCD + offsetof(struct ucd, prdt),
--			    (utrd->prdt & 0xffff) * sizeof(ucd->prdt[0]));
-+static void
-+sd_reset_lines(void)
-+{
 +	uint64_t deadline;
 +	nanoseconds_to_absolutetime(100ull * NSEC_PER_MSEC, &deadline);
 +	deadline += mach_absolute_time();
@@ -86,75 +76,116 @@
 +	while ((ufs_rd(SD_CLK) >> 24) & 6) {
 +		if (mach_absolute_time() > deadline) {
 +			break;
-+		}
+ 		}
+-		utrd->prdt = (1024u / 4) << 16 | n;
 +		delay(1);
 +	}
 +	ufs_wr(SD_ISTS, 0xffffffff);
 +}
 +
++/*
++ * Single 512-byte sector read in polled PIO mode using CMD17.
++ */
 +static int
-+sd_xfer(uint32_t sector, uint32_t nblocks, bool write)
++sd_read_sector(uint32_t sector, uint32_t *dst)
 +{
-+	uint32_t len = nblocks * UFS_BLOCK;
-+	uint32_t *buf = (uint32_t *)(su.dma + DMA_BOUNCE);
-+
-+	if (nblocks == 0 || len > BOUNCE_SIZE) {
-+		return EINVAL;
-+	}
-+
-+	uint64_t deadline;
-+	nanoseconds_to_absolutetime(100ull * NSEC_PER_MSEC, &deadline);
-+	deadline += mach_absolute_time();
-+	while (ufs_rd(SD_PRES) & 3) {
-+		if (mach_absolute_time() > deadline) {
-+			printf("SWEET SDHCI: inhibit stuck, state %08x\n", ufs_rd(SD_PRES));
-+			sd_reset_lines();
-+			return EBUSY;
-+		}
-+		delay(1);
-+	}
-+
++	if (ufs_rd(SD_PRES) & 3u) {
++		sd_reset_lines();
+ 	}
 +	ufs_wr(SD_ISTS, 0xffffffff);
-+	ufs_wr(SD_BLK, (nblocks << 16) | UFS_BLOCK);
++
++	/* Block count 1, block size 512 */
++	ufs_wr(SD_BLK, (1u << 16) | UFS_BLOCK);
 +	ufs_wr(SD_ARG, sector);
 +
-+	uint32_t opcode;
-+	uint32_t mode;
-+	if (!write) {
-+		if (nblocks > 1) {
-+			opcode = 18u;
-+			mode = 0x0036u; /* read | multi | blk_cnt_en | auto-cmd12 */
-+		} else {
-+			opcode = 17u;
-+			mode = 0x0012u; /* read | single | blk_cnt_en */
++	/* CMD17 (0x113a) + Transfer Mode Read (0x0010) */
++	ufs_wr(SD_CMD, (0x113au << 16) | 0x0010u);
+ 
+-	if (su.cache) {
+-		dma_clean(DMA_UTRL, sizeof(*utrd));
+-		dma_clean(DMA_UCD, 16 + cdb_len);
+-		dma_sync(DMA_UCD + offsetof(struct ucd, resp), sizeof(ucd->resp));
+-		if (len) {
+-			dma_clean(DMA_UCD + offsetof(struct ucd, prdt),
+-			    (utrd->prdt & 0xffff) * sizeof(ucd->prdt[0]));
++	uint64_t deadline;
++	nanoseconds_to_absolutetime(SD_TIMEOUT_NS, &deadline);
++	deadline += mach_absolute_time();
++
++	for (;;) {
++		uint32_t ists = ufs_rd(SD_ISTS);
++		if (ists & 0xffff8000u) {
++			printf("SWEET SDHCI: CMD17 err at sector %u, ISTS %08x STATE %08x\n",
++			    sector, ists, ufs_rd(SD_PRES));
++			sd_reset_lines();
++			return EIO;
  		}
- 	} else {
+-	} else {
 -		dma_sync(DMA_UTRL, sizeof(*utrd));
 -		dma_sync(DMA_UCD, sizeof(*ucd));
--	}
++		if ((ists & 0x20u) || (ufs_rd(SD_PRES) & 0x800u)) {
++			break;
++		}
++		if (mach_absolute_time() > deadline) {
++			printf("SWEET SDHCI: CMD17 brr timeout at sector %u, ISTS %08x STATE %08x\n",
++			    sector, ists, ufs_rd(SD_PRES));
++			sd_reset_lines();
++			return ETIMEDOUT;
++		}
++		delay(1);
+ 	}
 -	if (len) {
 -		if (su.cache && write) {
 -			dma_clean(DMA_BOUNCE, len);
-+		if (nblocks > 1) {
-+			opcode = 25u;
-+			mode = 0x0026u; /* write | multi | blk_cnt_en | auto-cmd12 */
- 		} else {
+-		} else {
 -			dma_sync(DMA_BOUNCE, len);
--		}
--	}
--	__builtin_arm_dsb(0xf);
--
--	ufs_wr(REG_UTRLDBR, 1);
--	uint64_t deadline;
--	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
-+			opcode = 24u;
-+			mode = 0x0002u; /* write | single | blk_cnt_en */
-+		}
++
++	/* Read 512 bytes (128 words) from FIFO register SD_BUF (0x20) */
++	for (int i = 0; i < 128; i++) {
++		dst[i] = ufs_rd(SD_BUF);
++	}
++	ufs_wr(SD_ISTS, 0x21u);
++
++	if (sector == 1) {
++		printf("SWEET SDHCI: sec1 %08x %08x state %08x ists %08x\n",
++		    dst[0], dst[1], ufs_rd(SD_PRES), ufs_rd(SD_ISTS));
 +	}
 +
-+	uint32_t cmd_val = (opcode << 24) | (0x3au << 16) | mode;
-+	ufs_wr(SD_CMD, cmd_val);
++	/* Short wait for Transfer Complete (0x02) or DAT idle */
++	for (int i = 0; i < 10000; i++) {
++		if ((ufs_rd(SD_ISTS) & 0x02u) || ((ufs_rd(SD_PRES) & 0x206u) == 0)) {
++			break;
+ 		}
+ 	}
+-	__builtin_arm_dsb(0xf);
++	if (ufs_rd(SD_PRES) & 0x206u) {
++		sd_reset_lines();
++	}
++	ufs_wr(SD_ISTS, 0xffffffff);
++	return 0;
++}
 +
++/*
++ * Single 512-byte sector write in polled PIO mode using CMD24.
++ */
++static int
++sd_write_sector(uint32_t sector, const uint32_t *src)
++{
++	if (ufs_rd(SD_PRES) & 3u) {
++		sd_reset_lines();
++	}
++	ufs_wr(SD_ISTS, 0xffffffff);
++
++	/* Block count 1, block size 512 */
++	ufs_wr(SD_BLK, (1u << 16) | UFS_BLOCK);
++	ufs_wr(SD_ARG, sector);
++
++	/* CMD24 (0x183a) + Transfer Mode Write (0x0000) */
++	ufs_wr(SD_CMD, (0x183au << 16) | 0x0000u);
+ 
+-	ufs_wr(REG_UTRLDBR, 1);
+ 	uint64_t deadline;
+-	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
 +	nanoseconds_to_absolutetime(SD_TIMEOUT_NS, &deadline);
  	deadline += mach_absolute_time();
 -	bool sleepable = su.wait && su.ready && ml_get_interrupts_enabled() &&
@@ -170,83 +201,15 @@
 -		if (now > deadline) {
 -			ufs_wr(REG_UTRLCLR, ~1u);
 -			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
+-			return ETIMEDOUT;
 +
-+	if (!write) {
-+		/* PIO Read: for each block, wait for Buffer Read Ready, then read 128 words */
-+		for (uint32_t b = 0; b < nblocks; b++) {
-+			for (;;) {
-+				uint32_t ists = ufs_rd(SD_ISTS);
-+				if (ists & 0xffff0000u) {
-+					printf("SWEET SDHCI: CMD%u err at sector %u block %u, ISTS %08x\n",
-+					    opcode, sector, b, ists);
-+					sd_reset_lines();
-+					return EIO;
-+				}
-+				if ((ists & (1u << 5)) || (ufs_rd(SD_PRES) & (1u << 11))) {
-+					ufs_wr(SD_ISTS, 1u << 5); /* clear buffer read ready */
-+					break;
-+				}
-+				if (mach_absolute_time() > deadline) {
-+					printf("SWEET SDHCI: CMD%u read timeout at sector %u block %u, ISTS %08x STATE %08x\n",
-+					    opcode, sector, b, ists, ufs_rd(SD_PRES));
-+					sd_reset_lines();
-+					return ETIMEDOUT;
-+				}
-+				delay(1);
-+			}
-+			uint32_t *p = buf + (b * (UFS_BLOCK / 4));
-+			for (int i = 0; i < (int)(UFS_BLOCK / 4); i++) {
-+				p[i] = ufs_rd(SD_BUF);
-+			}
-+		}
-+	} else {
-+		/* PIO Write: for each block, wait for Buffer Write Ready, then write 128 words */
-+		for (uint32_t b = 0; b < nblocks; b++) {
-+			for (;;) {
-+				uint32_t ists = ufs_rd(SD_ISTS);
-+				if (ists & 0xffff0000u) {
-+					printf("SWEET SDHCI: CMD%u err at sector %u block %u, ISTS %08x\n",
-+					    opcode, sector, b, ists);
-+					sd_reset_lines();
-+					return EIO;
-+				}
-+				if ((ists & (1u << 4)) || (ufs_rd(SD_PRES) & (1u << 10))) {
-+					ufs_wr(SD_ISTS, 1u << 4); /* clear buffer write ready */
-+					break;
-+				}
-+				if (mach_absolute_time() > deadline) {
-+					printf("SWEET SDHCI: CMD%u write timeout at sector %u block %u, ISTS %08x STATE %08x\n",
-+					    opcode, sector, b, ists, ufs_rd(SD_PRES));
-+					sd_reset_lines();
-+					return ETIMEDOUT;
-+				}
-+				delay(1);
-+			}
-+			uint32_t *p = buf + (b * (UFS_BLOCK / 4));
-+			for (int i = 0; i < (int)(UFS_BLOCK / 4); i++) {
-+				ufs_wr(SD_BUF, p[i]);
-+			}
-+		}
-+	}
-+
-+	/* Wait for Transfer Complete (bit 1) */
 +	for (;;) {
 +		uint32_t ists = ufs_rd(SD_ISTS);
-+		if (ists & 0xffff0000u) {
-+			printf("SWEET SDHCI: CMD%u completion err at sector %u, ISTS %08x\n",
-+			    opcode, sector, ists);
++		if (ists & 0xffff8000u) {
++			printf("SWEET SDHCI: CMD24 err at sector %u, ISTS %08x STATE %08x\n",
++			    sector, ists, ufs_rd(SD_PRES));
 +			sd_reset_lines();
 +			return EIO;
-+		}
-+		if (ists & 2u) {
-+			ufs_wr(SD_ISTS, ists);
-+			break;
-+		}
-+		if (mach_absolute_time() > deadline) {
-+			printf("SWEET SDHCI: CMD%u tc timeout at sector %u, ISTS %08x STATE %08x\n",
-+			    opcode, sector, ists, ufs_rd(SD_PRES));
-+			sd_reset_lines();
- 			return ETIMEDOUT;
  		}
 -		if (sleepable && now >= spin_until) {
 -			uint64_t wake = now + MIN(sleep_interval, deadline - now);
@@ -257,11 +220,20 @@
 -			}
 -		} else {
 -			delay(1);
--		}
--	}
++		if ((ists & 0x10u) || (ufs_rd(SD_PRES) & 0x400u)) {
++			break;
++		}
++		if (mach_absolute_time() > deadline) {
++			printf("SWEET SDHCI: CMD24 bwr timeout at sector %u, ISTS %08x STATE %08x\n",
++			    sector, ists, ufs_rd(SD_PRES));
++			sd_reset_lines();
++			return ETIMEDOUT;
+ 		}
++		delay(1);
+ 	}
 -	__builtin_arm_dsb(0xf);
 -	ufs_wr(REG_IS, ufs_rd(REG_IS));         /* acknowledge completion status */
--
+ 
 -	dma_sync(DMA_UTRL, sizeof(*utrd));
 -	if (su.cache) {
 -		dma_sync(DMA_UCD + offsetof(struct ucd, resp), sizeof(ucd->resp));
@@ -270,40 +242,71 @@
 -	}
 -	if (len && !(su.cache && write)) {
 -		dma_sync(DMA_BOUNCE, len);
--	}
--
++	for (int i = 0; i < 128; i++) {
++		ufs_wr(SD_BUF, src[i]);
+ 	}
++	ufs_wr(SD_ISTS, 0x11u);
+ 
 -	uint32_t ocs = utrd->dw2 & 0xff;
 -	if (ocs || ucd->resp[0] != 0x21 || ucd->resp[6] || ucd->resp[7]) {
 -		printf("SWEET UFS: command 0x%02x failed: ocs 0x%x upiu 0x%x response 0x%x status 0x%x\n",
 -		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
 -		return EIO;
--	}
-+		delay(1);
++	for (int i = 0; i < 10000; i++) {
++		if ((ufs_rd(SD_ISTS) & 0x02u) || ((ufs_rd(SD_PRES) & 0x206u) == 0)) {
++			break;
++		}
 +	}
-+
++	if (ufs_rd(SD_PRES) & 0x206u) {
++		sd_reset_lines();
+ 	}
++	ufs_wr(SD_ISTS, 0xffffffff);
  	return 0;
  }
  
 -/* READ(10) of count device blocks at lba into the bounce buffer. */
  static int
- ufs_read_blocks(uint64_t lba, uint32_t count)
+-ufs_read_blocks(uint64_t lba, uint32_t count)
++sd_xfer(uint32_t sector, uint32_t nblocks, bool write)
  {
 -	if (lba > UINT32_MAX || count > BOUNCE_SIZE / UFS_BLOCK) {
--		return EINVAL;
--	}
++	uint32_t len = nblocks * UFS_BLOCK;
++	uint32_t *buf = (uint32_t *)(su.dma + DMA_BOUNCE);
++
++	if (nblocks == 0 || len > BOUNCE_SIZE) {
+ 		return EINVAL;
+ 	}
 -	uint8_t cdb[10] = {
 -		0x28, 0,
 -		(uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
 -		0, (uint8_t)(count >> 8), (uint8_t)count, 0
 -	};
 -	return ufs_scsi(cdb, sizeof(cdb), count * UFS_BLOCK, false);
++
++	for (uint32_t b = 0; b < nblocks; b++) {
++		int err;
++		if (!write) {
++			err = sd_read_sector(sector + b, buf + (b * (UFS_BLOCK / 4)));
++		} else {
++			err = sd_write_sector(sector + b, buf + (b * (UFS_BLOCK / 4)));
++		}
++		if (err) {
++			return err;
++		}
++	}
++	return 0;
++}
++
++static int
++ufs_read_blocks(uint64_t lba, uint32_t count)
++{
 +	assert(count > 0 && count <= BOUNCE_SIZE / UFS_BLOCK);
 +	assert(lba + count - 1 <= UINT32_MAX);
 +	return sd_xfer((uint32_t)lba, count, false);
  }
  
  /*
-@@ -280,23 +326,18 @@
+@@ -280,23 +340,18 @@ ufs_write_blocks(uint64_t lba, uint32_t count)
  {
  	if (!su.writable || !su.nblocks || count == 0 || count > BOUNCE_SIZE / UFS_BLOCK ||
  	    lba < su.first_block || lba - su.first_block >= su.nblocks ||
@@ -331,20 +334,15 @@
  }
  
  static int
-@@ -356,34 +397,15 @@
+@@ -356,34 +411,17 @@ ufs_find_partition(const char *want)
  static int
  ufs_take_over_host(void)
  {
 -	uint32_t hce = ufs_rd(REG_HCE), hcs = ufs_rd(REG_HCS);
 -	if (!(hce & 1) || !(hcs & HCS_DP) || !(hcs & HCS_UTRLRDY)) {
 -		printf("SWEET UFS: host not ready (hce 0x%x hcs 0x%x)\n", hce, hcs);
-+	uint32_t hc = ufs_rd(SD_HC), clk = ufs_rd(SD_CLK);
-+	printf("SWEET SDHCI: hc %08x clk %08x state %08x hc2/ver %08x cap0 %08x (PIO mode)\n",
-+	    hc, clk, ufs_rd(SD_PRES), ufs_rd(0x3c), ufs_rd(SD_CAP0));
-+	if (!(clk & 4)) {                       /* SD clock enable */
-+		printf("SWEET SDHCI: SD clock is off\n");
- 		return ENXIO;
- 	}
+-		return ENXIO;
+-	}
 -	if (ufs_rd(REG_UTRLDBR)) {
 -		printf("SWEET UFS: requests outstanding from the bootloader\n");
 -		return EBUSY;
@@ -353,8 +351,13 @@
 -	if (((su.dma_pa + DMA_SIZE - 1) >> 32) && !(ufs_rd(REG_CAP) & CAP_64AS)) {
 -		printf("SWEET UFS: DMA memory at 0x%llx but the host has no 64-bit addressing\n",
 -		    su.dma_pa);
--		return ENXIO;
--	}
++	uint32_t hc = ufs_rd(SD_HC), clk = ufs_rd(SD_CLK);
++	printf("SWEET SDHCI: hc %08x clk %08x state %08x hc2/ver %08x cap0 %08x (PIO mode)\n",
++	    hc, clk, ufs_rd(SD_PRES), ufs_rd(0x3c), ufs_rd(SD_CAP0));
++	if (!(clk & 4)) {                       /* SD clock enable */
++		printf("SWEET SDHCI: SD clock is off\n");
+ 		return ENXIO;
+ 	}
 -	ufs_wr(REG_IE, 0);                      /* polled operation */
 -	ufs_wr(REG_IS, ufs_rd(REG_IS));
 -	ufs_wr(REG_UTRLRSR, 0);
@@ -369,20 +372,22 @@
 -		return EIO;
 -	}
 +	ufs_wr(SD_HC, hc & ~0x18u);             /* Select SDMA / PIO mode */
++	ufs_wr(0x34, 0x03ff00fbu);              /* SDHCI_INT_ENABLE */
++	ufs_wr(0x38, 0x00000000u);              /* SDHCI_SIGNAL_ENABLE */
 +	ufs_wr(SD_ISTS, 0xffffffff);
  	return 0;
  }
  
-@@ -624,12 +646,6 @@
+@@ -623,12 +661,6 @@ sweet_ufs_init(void)
+ 
  	lck_mtx_lock(&sweet_ufs_lock);
  	error = ufs_take_over_host();
- 	if (!error) {
+-	if (!error) {
 -		static const uint8_t tur[6] = { 0x00 };
 -		/* The first command after the bootloader may report a unit attention. */
 -		for (int i = 0; i < 3 && (error = ufs_scsi(tur, sizeof(tur), 0, false)); i++) {
 -		}
 -	}
--	if (!error) {
+ 	if (!error) {
  		error = ufs_find_partition(want);
  	}
- 	lck_mtx_unlock(&sweet_ufs_lock);
