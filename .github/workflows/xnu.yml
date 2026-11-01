@@ -23,7 +23,7 @@ on:
 
 
 concurrency:
-  group: xnu-build-${{ github.run_id }}
+  group: xnu-${{ github.ref }}
   cancel-in-progress: false
 
 env:
