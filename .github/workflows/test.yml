@@ -8,7 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Ubuntu works"
-  test-macos-14:
-    runs-on: macos-14
+  test-macos-latest:
+    runs-on: macos-latest
     steps:
-      - run: echo "macos-14 works"
+      - run: |
+          sw_vers
+          xcodebuild -version
+          ls -d /Applications/Xcode*.app
