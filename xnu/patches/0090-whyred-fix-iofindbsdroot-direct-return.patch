@@ -1,12 +1,13 @@
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -778,8 +778,10 @@
+@@ -778,9 +778,10 @@
+ 			panic("IOFindBSDRoot: SWEET UFS root %s unavailable: %d", rdBootVar, ufs_error);
+ 		}
  		strlcpy(rootName, rdBootVar, rootNameSize);
 -		IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
--		*oflags = 0;
--		goto iofrootx;
 +		printf("SWEET BSD: IOFindBSDRoot ufsroot0 major %d minor %d\n", major(*root), minor(*root));
-+		*oflags = 0;
+ 		*oflags = 0;
+-		goto iofrootx;
 +		IOService::setRootMedia(NULL);
 +		return kIOReturnSuccess;
  	}
@@ -14,7 +15,7 @@
  
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -1108,7 +1108,9 @@
+@@ -1110,7 +1110,9 @@
  	u_int32_t       flags;
  	kern_return_t   err;
  
@@ -24,21 +25,3 @@
  	if (err) {
  		printf("setconf: IOFindBSDRoot returned an error (%d);"
  		    "setting rootdevice to 'sd0a'.\n", err);     /* XXX DEBUG TEMP */
---- a/bsd/dev/sweet_sample.c
-+++ b/bsd/dev/sweet_sample.c
-@@ -62,6 +62,15 @@
- 		if (task != TASK_NULL) {
- 			sweet_sample_task(name, proc_pid(p), task);
- 		}
-+		if (proc_pid(p) == 0 && task != TASK_NULL) {
-+			thread_t th;
-+			int kn = 0;
-+			task_lock(task);
-+			queue_iterate(&task->threads, th, thread_t, task_threads) {
-+				printf("SMP kthread #%d %p cont %p\n", kn++, (void *)th, (void *)th->continuation);
-+			}
-+			task_unlock(task);
-+		}
- 	}
- 	return PROC_RETURNED;
- }
