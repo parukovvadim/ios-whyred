@@ -1,0 +1,188 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -872,12 +872,14 @@ bsd_init(void)
+ 	while (TRUE) {
+ 		int err;
+ 
++		printf("SWEET BSD: bsd_init calling setconf\n");
+ 		bsd_init_kprintf("calling setconf\n");
+ 		setconf();
+ #if CONFIG_NETBOOT
+ 		netboot = (mountroot == netboot_mountroot);
+ #endif
+ 
++		printf("SWEET BSD: bsd_init calling vfs_mountroot\n");
+ 		bsd_init_kprintf("vfs_mountroot\n");
+ 		if (0 == (err = vfs_mountroot())) {
+ 			break;
+@@ -899,15 +901,18 @@ bsd_init(void)
+ 		printf("cannot mount root, errno = %d\n", err);
+ 	}
+ 
++	printf("SWEET BSD: bsd_init vfs_mountroot succeeded, calling IOSecureBSDRoot\n");
+ 	IOSecureBSDRoot(rootdevice);
+ 
+ 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
+ 
++	printf("SWEET BSD: bsd_init calling VFS_ROOT\n");
+ 	bsd_init_kprintf("calling VFS_ROOT\n");
+ 	/* Get the vnode for '/'.  Set fdp->fd_fd.fd_cdir to reference it. */
+ 	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, vfs_context_kernel())) {
+ 		panic("bsd_init: cannot find root vnode: %s", PE_boot_args());
+ 	}
++	printf("SWEET BSD: bsd_init VFS_ROOT succeeded\n");
+ 	(void)vnode_ref(init_rootvnode);
+ 	(void)vnode_put(init_rootvnode);
+ 
+@@ -1040,11 +1045,14 @@ bsd_init(void)
+ #endif /* CONFIG_BASESYSTEMROOT */
+ 
+ 	/* Initialize signal state for process 0. */
++	printf("SWEET BSD: calling siginit\n");
+ 	bsd_init_kprintf("calling siginit\n");
+ 	siginit(kernproc);
+ 
++	printf("SWEET BSD: calling bsd_utaskbootstrap\n");
+ 	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
+ 	bsd_utaskbootstrap();
++	printf("SWEET BSD: bsd_utaskbootstrap returned\n");
+ 
+ 	pal_kernel_announce();
+ 
+@@ -1077,6 +1085,7 @@ bsdinit_task(void)
+ {
+ 	proc_t p = current_proc();
+ 
++	printf("SWEET BSD: bsdinit_task entered for pid %d\n", p ? proc_pid(p) : -1);
+ 	process_name("init", p);
+ 
+ 	/* Set up exception-to-signal reflection */
+@@ -1168,6 +1177,7 @@ bsd_utaskbootstrap(void)
+ 	thread_t thread;
+ 	struct uthread *ut;
+ 
++	printf("SWEET BSD: bsd_utaskbootstrap cloneproc enter\n");
+ 	/*
+ 	 * Clone the bootstrap process from the kernel process, without
+ 	 * inheriting either task characteristics or memory from the kernel;
+@@ -1176,6 +1186,7 @@ bsd_utaskbootstrap(void)
+ 
+ 	/* Hold the reference as it will be dropped during shutdown */
+ 	initproc = proc_find(1);
++	printf("SWEET BSD: bsd_utaskbootstrap cloneproc done, thread=%p initproc=%p\n", (void *)thread, (void *)initproc);
+ #if __PROC_INTERNAL_DEBUG
+ 	if (initproc == PROC_NULL) {
+ 		panic("bsd_utaskbootstrap: initproc not set");
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -1237,12 +1237,14 @@ vfs_mountroot(void)
+ 		KDBG_RELEASE(DBG_MOUNTROOT | DBG_FUNC_END, error, 0);
+ 		return error;
+ 	}
++	printf("SWEET VFS: vfs_mountroot entering, rootdev=0x%x\n", rootdev);
+ 	if ((error = bdevvp(rootdev, &rootvp))) {
+ 		printf("vfs_mountroot: can't setup bdevvp\n");
+ 
+ 		KDBG_RELEASE(DBG_MOUNTROOT | DBG_FUNC_END, error, 1);
+ 		return error;
+ 	}
++	printf("SWEET VFS: vfs_mountroot bdevvp OK, rootvp=%p\n", (void *)rootvp);
+ 	/*
+ 	 * 4951998 - code we call in vfc_mountroot may replace rootvp
+ 	 * so keep a local copy for some house keeping.
+@@ -1255,6 +1257,7 @@ vfs_mountroot(void)
+ 			continue;
+ 		}
+ 
++		printf("SWEET VFS: vfs_mountroot trying '%s'\n", vfsp->vfc_name);
+ 		mp = vfs_rootmountalloc_internal(vfsp, "root_device");
+ 		mp->mnt_devvp = rootvp;
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+@@ -1275,6 +1278,7 @@ vfs_mountroot(void)
+ 		} else {
+ 			error = VFS_MOUNT(mp, rootvp, 0, ctx);
+ 		}
++		printf("SWEET VFS: vfs_mountroot '%s' returned %d\n", vfsp->vfc_name, error);
+ 
+ 		if (!error) {
+ 			if (bdevvp_rootvp != rootvp) {
+--- a/bsd/sweet_hfs/core/hfs_vfsops.c
++++ b/bsd/sweet_hfs/core/hfs_vfsops.c
+@@ -1122,6 +1122,8 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+ 	cred = p ? vfs_context_ucred(context) : NOCRED;
+ 	mntwrapper = 0;
+ 
++	printf("SWEET HFS: hfs_mountfs enter: isroot=%d ronly=%d dev=0x%x\n", isroot, ronly, dev);
++
+ 	bp = NULL;
+ 	hfsmp = NULL;
+ 	mdbp = NULL;
+@@ -1256,6 +1258,7 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+ 
+ 	mdb_offset = (daddr64_t)HFS_PRI_SECTOR(log_blksize);
+ 
++	printf("SWEET HFS: hfs_mountfs reading VH at mdb_offset=0x%llx\n", (unsigned long long)mdb_offset);
+ 	if ((retval = (int)buf_meta_bread(devvp, 
+ 				HFS_PHYSBLK_ROUNDDOWN(mdb_offset, (phys_blksize/log_blksize)), 
+ 				phys_blksize, cred, &bp))) {
+@@ -1264,6 +1267,7 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+ 		}
+ 		goto error_exit;
+ 	}
++	printf("SWEET HFS: hfs_mountfs VH read OK\n");
+ 	mdbp = hfs_malloc_data(kMDBSize);
+ 	bcopy((char *)buf_dataptr(bp) + HFS_PRI_OFFSET(phys_blksize), mdbp, kMDBSize);
+ 	buf_brelse(bp);
+@@ -1663,7 +1667,9 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+ 			goto error_exit;
+ 		}
+ 
++		printf("SWEET HFS: hfs_mountfs calling hfs_MountHFSPlusVolume\n");
+ 		retval = hfs_MountHFSPlusVolume(hfsmp, vhp, embeddedOffset, disksize, p, args, cred);
++		printf("SWEET HFS: hfs_mountfs hfs_MountHFSPlusVolume returned %d\n", retval);
+ 		/*
+ 		 * If the backend didn't like our physical blocksize
+ 		 * then retry with physical blocksize of 512.
+@@ -1752,7 +1758,9 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+ 			}
+ 
+ 			/* Try again with a smaller block size... */
+-			retval = hfs_MountHFSPlusVolume(hfsmp, vhp, embeddedOffset, disksize, p, args, cred);
++			printf("SWEET HFS: hfs_mountfs calling hfs_MountHFSPlusVolume\n");
++		retval = hfs_MountHFSPlusVolume(hfsmp, vhp, embeddedOffset, disksize, p, args, cred);
++		printf("SWEET HFS: hfs_mountfs hfs_MountHFSPlusVolume returned %d\n", retval);
+ 			if (retval && HFS_MOUNT_DEBUG) {
+ 				printf("hfs_MountHFSPlusVolume (late) returned %d\n",retval); 
+ 			}
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -397,6 +397,7 @@ sweet_ufs_close(__unused dev_t dev, __unused int flags, __unused int devtype, __
+ static void
+ sweet_ufs_strategy(buf_t bp)
+ {
++	static int ufs_strat_count = 0;
+ 	int error = 0;
+ 	caddr_t vaddr = NULL;
+ 	uint64_t off = (uint64_t)buf_blkno(bp) * su.secsize;
+@@ -405,6 +406,11 @@ sweet_ufs_strategy(buf_t bp)
+ 
+ 	bool rd = buf_flags(bp) & B_READ;
+ 
++	if (ufs_strat_count < 50) {
++		printf("SWEET UFS: strat #%d %s blk=%llu cnt=%u (off=0x%llx)\n",
++		    ufs_strat_count, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), count, (unsigned long long)off);
++	}
++
+ 	buf_setresid(bp, count);
+ 	if (!rd && !su.writable) {
+ 		error = EROFS;
+@@ -458,6 +464,9 @@ done:
+ 	if (error) {
+ 		buf_seterror(bp, error);
+ 	}
++	if (ufs_strat_count < 50) {
++		printf("SWEET UFS: strat #%d done err=%d\n", ufs_strat_count++, error);
++	}
+ 	buf_biodone(bp);
+ }
+ 
