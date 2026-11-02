@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/mem.c b/bsd/dev/mem.c
-index 949c9dd..daee98c 100644
+index 291a546..daee98c 100644
 --- a/bsd/dev/mem.c
 +++ b/bsd/dev/mem.c
 @@ -175,6 +175,9 @@ sweet_null_tee(char *name, size_t len)
@@ -13,7 +13,7 @@ index 949c9dd..daee98c 100644
  	for (const char *t = sweet_null_names; *t;) {
  		const char *end = strchr(t, ',');
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index b1e2896..952f0cd 100644
+index b40eccd..aa7d7d0 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
 @@ -29,11 +29,14 @@ static char sweet_sample_names[128];
@@ -28,7 +28,7 @@ index b1e2896..952f0cd 100644
  		const char *end = strchr(t, ',');
  		size_t tl = end ? (size_t)(end - t) : strlen(t);
 -		if (tl == n && n > 0 && strncmp(t, name, n) == 0) {
-+		if (tl > 0 && ((tl == n && strncmp(t, name, n) == 0) || strstr(name, t) != NULL)) {
++		if (tl > 0 && strncmp(t, name, tl) == 0) {
  			return true;
  		}
  		if (!end) {
@@ -54,7 +54,7 @@ index b1e2896..952f0cd 100644
  }
  
 diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
-index 18cfad6..d475ecc 100644
+index a20a764..d475ecc 100644
 --- a/osfmk/kern/exception.c
 +++ b/osfmk/kern/exception.c
 @@ -1014,28 +1014,12 @@ sweet_sample_task(const char *name, int pid, task_t task)
