@@ -1,25 +1,8 @@
---- a/iokit/KernelConfigTables.cpp
-+++ b/iokit/KernelConfigTables.cpp
-@@ -82,6 +82,11 @@
-     "     'IOProviderClass' = IOResources;",
-     "     'IOMatchCategory' = SweetBattery;",
-     "   },",
-+    "   {",
-+    "     'IOClass'         = IOAcceleratorES;",
-+    "     'IOProviderClass' = IOResources;",
-+    "     'IOMatchCategory' = IOAcceleratorES;",
-+    "   },",
- #endif
-     "   {",
-     "     'IOClass'         = IOPanicPlatform;",
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 2094443..5a8f1ec 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -668,8 +668,75 @@
- 		char name[32];
- 		proc_selfname(name, sizeof(name));
- 		IOLog("SWEET FB: %s sel %u in %u/%u out %u/%u -> 0x%x\n", name, selector,
- 		    args->scalarInputCount, args->structureInputSize,
- 		    args->scalarOutputCount, args->structureOutputSize, ret);
+@@ -577,4 +577,63 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
  	}
  	return ret;
  }
@@ -83,3 +66,19 @@
 +	return true;
 +}
  #endif /* SWEET */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 92f3e26..ff1f893 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -82,6 +82,11 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetBattery;"
+     "   },"
++    "   {"
++    "     'IOClass'         = IOAcceleratorES;"
++    "     'IOProviderClass' = IOResources;"
++    "     'IOMatchCategory' = IOAcceleratorES;"
++    "   },"
+ #endif
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
