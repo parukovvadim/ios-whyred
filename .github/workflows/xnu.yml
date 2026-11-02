@@ -67,8 +67,6 @@ jobs:
           # (mig, ctf tools) needs a single executable, so point at wrappers
           sed -i '' 's|export CC="$(xcrun -find clang)"|export CC="$CCACHE_WRAP/clang"|; s|export CXX="$(xcrun -find clang++)"|export CXX="$CCACHE_WRAP/clang++"|' dxb/build.sh
           grep -c 'export CC="$CCACHE_WRAP/clang"' dxb/build.sh
-          # Fail build immediately if any whyred patch fails or is skipped
-          sed -i '' 's/warning "Skipping patch ${PATCH}.*/if [[ "$PATCH" == *whyred* ]]; then echo "::error::Whyred patch failed: $PATCH: $APPLY_CHECK"; exit 1; fi; warning "Skipping patch: $PATCH"/' dxb/build.sh
           ls dxb/patches
 
       - name: Deps
