@@ -1,0 +1,85 @@
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -82,6 +82,11 @@
+     "     'IOProviderClass' = IOResources;",
+     "     'IOMatchCategory' = SweetBattery;",
+     "   },",
++    "   {",
++    "     'IOClass'         = IOAcceleratorES;",
++    "     'IOProviderClass' = IOResources;",
++    "     'IOMatchCategory' = IOAcceleratorES;",
++    "   },",
+ #endif
+     "   {",
+     "     'IOClass'         = IOPanicPlatform;",
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -668,8 +668,75 @@
+ 		char name[32];
+ 		proc_selfname(name, sizeof(name));
+ 		IOLog("SWEET FB: %s sel %u in %u/%u out %u/%u -> 0x%x\n", name, selector,
+ 		    args->scalarInputCount, args->structureInputSize,
+ 		    args->scalarOutputCount, args->structureOutputSize, ret);
+ 	}
+ 	return ret;
+ }
++
++class IOAcceleratorESUserClient : public IOUserClient {
++	OSDeclareDefaultStructors(IOAcceleratorESUserClient);
++public:
++	virtual bool initWithTask(task_t owningTask, void *securityID, UInt32 type) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn clientClose(void) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++	    IOExternalMethodDispatch *dispatch, OSObject *target, void *reference) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(IOAcceleratorESUserClient, IOUserClient);
++
++bool
++IOAcceleratorESUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
++{
++	if (!IOUserClient::initWithTask(owningTask, securityID, type)) {
++		return false;
++	}
++	return true;
++}
++
++IOReturn
++IOAcceleratorESUserClient::clientClose(void)
++{
++	terminate();
++	return kIOReturnSuccess;
++}
++
++IOReturn
++IOAcceleratorESUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++    __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target, __unused void *reference)
++{
++	char name[32];
++	proc_selfname(name, sizeof(name));
++	IOLog("SWEET ACCEL: %s sel %u in %u/%u out %u/%u\n", name, selector,
++	    args ? args->scalarInputCount : 0, args ? args->structureInputSize : 0,
++	    args ? args->scalarOutputCount : 0, args ? args->structureOutputSize : 0);
++	return kIOReturnUnsupported;
++}
++
++class IOAcceleratorES : public IOService {
++	OSDeclareDefaultStructors(IOAcceleratorES);
++public:
++	virtual bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
++
++bool
++IOAcceleratorES::start(IOService *provider)
++{
++	if (!IOService::start(provider)) {
++		return false;
++	}
++	setProperty(kIOUserClientClassKey, "IOAcceleratorESUserClient");
++	registerService();
++	IOLog("SWEET ACCEL: IOAcceleratorES registered\n");
++	return true;
++}
+ #endif /* SWEET */
