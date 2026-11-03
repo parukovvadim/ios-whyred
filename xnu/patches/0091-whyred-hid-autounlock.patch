@@ -1,8 +1,8 @@
 diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
-index e52876f..39852e6 100644
+index 27bc49d..84c27f5 100644
 --- a/iokit/Kernel/arm/hid/SweetHID.cpp
 +++ b/iokit/Kernel/arm/hid/SweetHID.cpp
-@@ -374,10 +374,13 @@ SweetHIDButtons::start(IOService *provider)
+@@ -384,10 +384,13 @@ SweetHIDButtons::start(IOService *provider)
  	if (!IOHIDEventService::start(provider)) {
  		return false;
  	}
@@ -18,11 +18,71 @@ index e52876f..39852e6 100644
  		}
  	}
  	gSweetButtons = this;
-@@ -403,15 +406,62 @@ void
+@@ -413,15 +416,73 @@ void
  SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
  {
  	SweetHIDButtons *self = (SweetHIDButtons *)owner;
-+	int step = self->fTestCount % 8;
++	int step = self->fTestCount % 10;
++
++	switch (step) {
++	/* Phase 1: Tap Power key to wake display/SpringBoard */
++	case 0:
++		self->key(kHIDUsage_Csmr_Power, true);
++		sender->setTimeoutMS(100);
++		break;
++	case 1:
++		self->key(kHIDUsage_Csmr_Power, false);
++		sender->setTimeoutMS(800);
++		break;
++
++	/* Phase 2: Smooth swipe up from bottom edge to unlock (iPhone X home swipe) */
++	case 2:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 2140);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 3:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 1750);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 4:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 1350);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 5:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 950);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 6:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 550);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 7:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 200);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 8:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, false, 540, 200);
++		}
++		sender->setTimeoutMS(500);
++		break;
++	default:
++		/* Rest between unlock attempts: 10s */
++		sender->setTimeoutMS(10 * 1000);
++		break;
++	}
  
 -	/*
 -	 * Home (Menu) press, then the release 100 ms later; Setup's "Hello"
@@ -32,75 +92,24 @@ index e52876f..39852e6 100644
 -	self->key(kHIDUsage_Csmr_Menu, press);
 -	if (++self->fTestCount < 60) {
 -		sender->setTimeoutMS(press ? 100 : self->fTestSecs * 1000);
-+	switch (step) {
-+	case 0:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 2140);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 1:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 1750);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 2:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 1350);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 3:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 950);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 4:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 550);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 5:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, true, 540, 200);
-+		}
-+		sender->setTimeoutMS(50);
-+		break;
-+	case 6:
-+		if (gSweetTouch) {
-+			gSweetTouch->touch(0, false, 540, 200);
-+		}
-+		sender->setTimeoutMS(500);
-+		break;
-+	case 7:
-+		self->key(kHIDUsage_Csmr_Menu, true);
-+		IOSleep(60);
-+		self->key(kHIDUsage_Csmr_Menu, false);
-+		sender->setTimeoutMS(self->fTestSecs * 1000);
-+		break;
-+	}
-+
 +	self->fTestCount++;
 +	if (self->fTestCount >= 240) {
 +		return;
  	}
  }
  
-@@ -443,12 +493,12 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+@@ -467,8 +528,8 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 	if (finger < 0 || finger >= SWEET_TOUCH_FINGERS) {
  		return;
  	}
- 	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
+-	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
 -	y = y < 0 ? 0 : (y > 2399 ? 2399 : y);
++	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
 +	y = y < 0 ? 0 : (y > 2159 ? 2159 : y);
  
  	IOLockLock(fLock);
  	bool was = fDown[finger];
- 	IOFixed nx = (IOFixed)(((int64_t)x << 16) / 1080);
+-	IOFixed nx = (IOFixed)(((int64_t)x << 16) / 1080);
 -	IOFixed ny = (IOFixed)(((int64_t)y << 16) / 2400);
++	IOFixed nx = (IOFixed)(((int64_t)x << 16) / 1080);
 +	IOFixed ny = (IOFixed)(((int64_t)y << 16) / 2160);
- 	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
- 	if (was == down && !moved) {
- 		IOLockUnlock(fLock);
