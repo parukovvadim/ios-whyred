@@ -1,0 +1,83 @@
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 27bc49d..74c27f4 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -384,10 +384,13 @@ SweetHIDButtons::start(IOService *provider)
+ 	if (!IOHIDEventService::start(provider)) {
+ 		return false;
+ 	}
+-	if (PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs)) && fTestSecs) {
++	if (!PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs))) {
++		fTestSecs = 5;
++	}
++	if (fTestSecs > 0) {
+ 		fTest = IOTimerEventSource::timerEventSource(this, &SweetHIDButtons::testFired);
+ 		if (fTest && _hidWorkLoop->addEventSource(fTest) == kIOReturnSuccess) {
+-			fTest->setTimeoutMS(fTestSecs * 1000);
++			fTest->setTimeoutMS(8 * 1000);
+ 		}
+ 	}
+ 	gSweetButtons = this;
+@@ -413,15 +416,54 @@ void
+ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+ {
+ 	SweetHIDButtons *self = (SweetHIDButtons *)owner;
++	int step = self->fTestCount % 6;
++
++	switch (step) {
++	case 0:
++		self->key(kHIDUsage_Csmr_Power, true);
++		self->key(kHIDUsage_Csmr_Menu, true);
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 2380);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 1:
++		self->key(kHIDUsage_Csmr_Power, false);
++		self->key(kHIDUsage_Csmr_Menu, false);
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 1900);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 2:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 1400);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 3:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 900);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 4:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, true, 540, 400);
++		}
++		sender->setTimeoutMS(50);
++		break;
++	case 5:
++		if (gSweetTouch) {
++			gSweetTouch->touch(0, false, 540, 400);
++		}
++		sender->setTimeoutMS(self->fTestSecs * 1000);
++		break;
++	}
+ 
+-	/*
+-	 * Home (Menu) press, then the release 100 ms later; Setup's "Hello"
+-	 * screen waits for it. Even counts press, odd counts release.
+-	 */
+-	bool press = (self->fTestCount & 1) == 0;
+-	self->key(kHIDUsage_Csmr_Menu, press);
+-	if (++self->fTestCount < 60) {
+-		sender->setTimeoutMS(press ? 100 : self->fTestSecs * 1000);
++	self->fTestCount++;
++	if (self->fTestCount >= 180) {
++		return;
+ 	}
+ }
+ 
