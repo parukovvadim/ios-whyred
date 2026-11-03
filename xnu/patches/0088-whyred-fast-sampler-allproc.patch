@@ -13,7 +13,7 @@ index 291a546..daee98c 100644
  	for (const char *t = sweet_null_names; *t;) {
  		const char *end = strchr(t, ',');
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index b40eccd..7775928 100644
+index b40eccd..be34b9e 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
 @@ -29,11 +29,14 @@ static char sweet_sample_names[128];
@@ -37,7 +37,7 @@ index b40eccd..7775928 100644
  	static int chan;
  	if (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
 -		strlcpy(sweet_sample_names, "SpringBoard,backboardd", sizeof(sweet_sample_names));
-+		strlcpy(sweet_sample_names, "SpringBoard,backboardd,datami,budd", sizeof(sweet_sample_names));
++		strlcpy(sweet_sample_names, "SpringBoard,backboardd,launchd,lsd,containermanagerd", sizeof(sweet_sample_names));
  	}
  	if (sweet_sample_names[0] == '-') {
  		return;
@@ -77,10 +77,10 @@ index b40eccd..7775928 100644
  		thread_deallocate(thread);
  	}
 diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
-index a20a764..e1be968 100644
+index a20a764..574ed23 100644
 --- a/osfmk/kern/exception.c
 +++ b/osfmk/kern/exception.c
-@@ -1011,31 +1011,18 @@ sweet_sample_task(const char *name, int pid, task_t task)
+@@ -1011,10 +1011,13 @@ sweet_sample_task(const char *name, int pid, task_t task)
  	}
  	printf("SMP %s[%d] slide 0x%llx mh 0x%llx\n", name, pid, slide, task->mach_header_vm_address);
  
@@ -92,28 +92,16 @@ index a20a764..e1be968 100644
  	queue_iterate(&task->threads, thread, thread_t, task_threads) {
  		arm_saved_state_t *ss = find_user_regs(thread);
 -		char line[400];
--		int n;
--		uint64_t fp;
++		char line[240];
+ 		int n;
+ 		uint64_t fp;
  
- 		if (ss == NULL || !is_saved_state64(ss)) {
- 			continue;
- 		}
--		fp = get_saved_state_fp(ss);
--		n = snprintf(line, sizeof(line), "SMP %s t%d pc 0x%llx lr 0x%llx sp 0x%llx bt", name, tn++,
-+		printf("SMP %s t%d pc 0x%llx lr 0x%llx sp 0x%llx\n", name, tn++,
+@@ -1024,7 +1027,7 @@ sweet_sample_task(const char *name, int pid, task_t task)
+ 		fp = get_saved_state_fp(ss);
+ 		n = snprintf(line, sizeof(line), "SMP %s t%d pc 0x%llx lr 0x%llx sp 0x%llx bt", name, tn++,
  		    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss));
 -		for (int i = 0; i < 16 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
--			uint64_t frame[2];
--			if (vm_map_read_user(map, fp, frame, sizeof(frame)) != KERN_SUCCESS) {
--				break;
--			}
--			n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
--			if (frame[0] <= fp) {
--				break;
--			}
--			fp = frame[0];
--		}
--		printf("%s\n", line);
- 	}
- 	task_unlock(task);
- }
++		for (int i = 0; i < 8 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
+ 			uint64_t frame[2];
+ 			if (vm_map_read_user(map, fp, frame, sizeof(frame)) != KERN_SUCCESS) {
+ 				break;
