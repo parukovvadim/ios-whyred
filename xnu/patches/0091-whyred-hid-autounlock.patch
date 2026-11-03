@@ -18,7 +18,7 @@ index 27bc49d..84c27f5 100644
  		}
  	}
  	gSweetButtons = this;
-@@ -413,15 +416,73 @@ void
+@@ -413,15 +416,71 @@ void
  SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
  {
  	SweetHIDButtons *self = (SweetHIDButtons *)owner;
@@ -98,7 +98,7 @@ index 27bc49d..84c27f5 100644
  	}
  }
  
-@@ -467,8 +528,8 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+@@ -467,10 +524,10 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
  	if (finger < 0 || finger >= SWEET_TOUCH_FINGERS) {
  		return;
  	}
