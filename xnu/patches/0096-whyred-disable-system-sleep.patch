@@ -1,39 +1,8 @@
---- a/iokit/Kernel/IOPMrootDomain.cpp
-+++ b/iokit/Kernel/IOPMrootDomain.cpp
-@@ -555,7 +555,15 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
- #endif /* !defined(XNU_TARGET_OS_OSX) */
- 
- static uint32_t         gNoIdleFlag = 0;
--static uint32_t         gSleepDisabledFlag = 0;
-+/*
-+ * whyred/hakios: the system does not sleep. There is nothing to sleep into and
-+ * with the screen locked powerd asks for system sleep within seconds, which
-+ * ended in IOCPUSleepKernel() -- on SMP this stops waiting for a processor to go
-+ * down via PSCI CPU_OFF that never goes. Refused instead, the system stays awake
-+ * with display off, and buttons or touch wake the screen.
-+ * Boot-arg syssleep=1 gives the old behavior back.
-+ */
-+static uint32_t         gSleepDisabledFlag = 1;
- static uint32_t         gSwdPanic = 1;
- static uint32_t         gSwdSleepTimeout = 0;
- static uint32_t         gSwdWakeTimeout = 0;
-@@ -1587,6 +1596,13 @@ IOPMrootDomain::start( IOService * nub )
- #endif /* DEVELOPMENT || DEBUG */
- 
- 	PE_parse_boot_argn("noidle", &gNoIdleFlag, sizeof(gNoIdleFlag));
-+	{
-+		uint32_t syssleep = 0;
-+
-+		if (PE_parse_boot_argn("syssleep", &syssleep, sizeof(syssleep)) && syssleep) {
-+			gSleepDisabledFlag = 0;
-+		}
-+	}
- 	PE_parse_boot_argn("swd_sleeptimeout", &gSwdSleepTimeout, sizeof(gSwdSleepTimeout));
- 	PE_parse_boot_argn("swd_waketimeout", &gSwdWakeTimeout, sizeof(gSwdWakeTimeout));
- 	PE_parse_boot_argn("swd_timeout", &gSwdSleepWakeTimeout, sizeof(gSwdSleepWakeTimeout));
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index cc440ed..2231132 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -737,6 +737,43 @@ sweet_log_start(void)
+@@ -862,6 +862,43 @@ sweet_log_start(void)
  	}
  }
  
@@ -59,7 +28,7 @@
 +		uint32_t n = (uint32_t)MIN(MIN(need, (uint64_t)(SWEET_LOG_SIZE / UFS_BLOCK - blk)),
 +		    (uint64_t)(BOUNCE_SIZE / UFS_BLOCK));
 +		memcpy(bounce, sweet_log_ring + (uint64_t)blk * UFS_BLOCK, n * UFS_BLOCK);
-+		error = ufs_write_blocks(base + 1 + blk, n);
++	error = ufs_write_blocks(base + 1 + blk, n);
 +		pos += (uint64_t)(blk + n) * UFS_BLOCK - off;
 +	}
 +	if (!error) {
@@ -77,22 +46,11 @@
  /* Root device for rd=ufsroot0 (IOFindBSDRoot). */
  int sweet_ufs_rootdev(dev_t *dev);
  
---- a/osfmk/kern/debug.c
-+++ b/osfmk/kern/debug.c
-@@ -1150,6 +1150,10 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
- void
- panic_spin_forever(void)
- {
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
-+	extern void sweet_log_panic_flush(void);
-+	sweet_log_panic_flush();
-+#endif
- 	for (;;) {
- #if defined(__arm__) || defined(__arm64__)
- 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index f41b75b..f0c9d6d 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -2640,6 +2640,22 @@ done:
+@@ -2622,6 +2622,22 @@ done:
  	return ret;
  }
  
@@ -115,7 +73,7 @@
  /*
   * exec_handle_file_actions
   *
-@@ -2709,7 +2725,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
+@@ -2691,7 +2707,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
  			AUDIT_SUBCALL_ENTER(OPEN, p, uthread);
  
  			NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1, UIO_SYSSPACE,
@@ -123,4 +81,54 @@
 +			    CAST_USER_ADDR_T(exec_applog_path(psfa->psfaa_filedes, psfa->psfaa_openargs.psfao_path)),
  			    imgp->ip_vfs_context);
  
- 			error = open1(imgp->ip_vfs_context, ndp,\n
+ 			error = open1(imgp->ip_vfs_context, ndp,
+diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
+index 4a06407..9d6a3d9 100644
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -555,7 +555,15 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
+ #endif /* !defined(XNU_TARGET_OS_OSX) */
+ 
+ static uint32_t         gNoIdleFlag = 0;
+-static uint32_t         gSleepDisabledFlag = 0;
++/*
++ * whyred/hakios: the system does not sleep. There is nothing to sleep into and
++ * with the screen locked powerd asks for system sleep within seconds, which
++ * ended in IOCPUSleepKernel() -- on SMP this stops waiting for a processor to go
++ * down via PSCI CPU_OFF that never goes. Refused instead, the system stays awake
++ * with display off, and buttons or touch wake the screen.
++ * Boot-arg syssleep=1 gives the old behavior back.
++ */
++static uint32_t         gSleepDisabledFlag = 1;
+ static uint32_t         gSwdPanic = 1;
+ static uint32_t         gSwdSleepTimeout = 0;
+ static uint32_t         gSwdWakeTimeout = 0;
+@@ -1587,6 +1595,13 @@ IOPMrootDomain::start( IOService * nub )
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+ 	PE_parse_boot_argn("noidle", &gNoIdleFlag, sizeof(gNoIdleFlag));
++	{
++		uint32_t syssleep = 0;
++
++		if (PE_parse_boot_argn("syssleep", &syssleep, sizeof(syssleep)) && syssleep) {
++			gSleepDisabledFlag = 0;
++		}
++	}
+ 	PE_parse_boot_argn("swd_sleeptimeout", &gSwdSleepTimeout, sizeof(gSwdSleepTimeout));
+ 	PE_parse_boot_argn("swd_waketimeout", &gSwdWakeTimeout, sizeof(gSwdWakeTimeout));
+ 	PE_parse_boot_argn("swd_timeout", &gSwdSleepWakeTimeout, sizeof(gSwdSleepWakeTimeout));
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 0a00656..91e9a21 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1150,6 +1150,10 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ void
+ panic_spin_forever(void)
+ {
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	extern void sweet_log_panic_flush(void);
++	sweet_log_panic_flush();
++#endif
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
