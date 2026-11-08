@@ -16,7 +16,7 @@ def main():
     out_bin = out_txt + ".bin"
 
     print(f"[*] Querying userdata block device via {ADB}...")
-    dev_out = run_adb(["shell", "for d in /dev/block/by-name/userdata /dev/block/bootdevice/by-name/userdata; do [ -e $d ] && readlink -f $d && break; done"]).decode().strip()
+    dev_out = run_adb(["shell", "readlink -f /dev/block/by-name/userdata"]).decode().strip()
     if not dev_out:
         print("[-] Error: userdata block device not found via adb shell", file=sys.stderr)
         sys.exit(1)
