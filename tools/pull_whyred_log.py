@@ -16,11 +16,18 @@ def main():
     out_bin = out_txt + ".bin"
 
     print(f"[*] Querying userdata block device via {ADB}...")
-    dev_out = run_adb(["shell", "readlink -f /dev/block/by-name/userdata"]).decode().strip()
-    if not dev_out:
-        print("[-] Error: userdata block device not found via adb shell", file=sys.stderr)
-        sys.exit(1)
-    dev = dev_out.splitlines()[-1].strip()
+    dev = None
+    for cand in ["/dev/block/bootdevice/by-name/userdata", "/dev/block/by-name/userdata", "/dev/block/mmcblk0p64"]:
+        try:
+            out = run_adb(["shell", f"readlink -f {cand}"]).decode().strip()
+            dev_cand = out.splitlines()[-1].strip()
+            if dev_cand.startswith("/dev/block/"):
+                dev = dev_cand
+                break
+        except Exception:
+            pass
+    if not dev:
+        dev = "/dev/block/mmcblk0p64"
     print(f"[+] Found userdata device: {dev}")
 
     size_out = run_adb(["shell", f"blockdev --getsize64 {dev}"]).decode().strip()

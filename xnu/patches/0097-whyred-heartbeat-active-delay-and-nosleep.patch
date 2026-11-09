@@ -1,0 +1,84 @@
+diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
+index be34b9e..78c7060 100644
+--- a/bsd/dev/sweet_sample.c
++++ b/bsd/dev/sweet_sample.c
+@@ -87,9 +87,9 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
+ 	static int hb_chan;
+ 	uint32_t s = 0;
+ 	while (1) {
+-		(void)tsleep(&hb_chan, PZERO, "sweethb", 5 * hz);
+-		s += 5;
+-		printf("SWEET HEARTBEAT %u (%us)\n", s / 5, s);
++		(void)tsleep(&hb_chan, PZERO, "sweethb", 1 * hz);
++		s++;
++		printf("SWEET HB %us\n", s);
+ 	}
+ }
+ 
+diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
+index 9d6a3d9..69d761f 100644
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -3291,8 +3291,10 @@ IOPMrootDomain::updatePreventIdleSleepListInternal(
+ 		// Last driver removed from prevent list.
+ 		// Drop the driver clamp to allow idle sleep.
+ 
+-		changePowerStateWithTagTo(SLEEP_STATE, kCPSReasonIdleSleepAllow);
+-		evaluatePolicy( kStimulusNoIdleSleepPreventers );
++		if (!gSleepDisabledFlag) {
++			changePowerStateWithTagTo(SLEEP_STATE, kCPSReasonIdleSleepAllow);
++			evaluatePolicy( kStimulusNoIdleSleepPreventers );
++		}
+ 	}
+ 	messageClient(kIOPMMessageIdleSleepPreventers, systemCapabilityNotifier.get(),
+ 	    &newCount, sizeof(newCount));
+@@ -4078,6 +4080,10 @@ IOPMrootDomain::changePowerStateWithTagTo(
+ 	uint32_t tag = nextRequestTag(reason);
+ 	DLOG("%s(%s, %x)\n", __FUNCTION__, getPowerStateString((uint32_t) ordinal), tag);
+ 
++	if (gSleepDisabledFlag && ordinal == SLEEP_STATE) {
++		ordinal = getRUN_STATE();
++	}
++
+ 	if ((ordinal != ON_STATE) && (ordinal != AOT_STATE) && (ordinal != SLEEP_STATE)) {
+ 		return kIOReturnUnsupported;
+ 	}
+@@ -4092,6 +4098,10 @@ IOPMrootDomain::changePowerStateWithTagToPriv(
+ 	uint32_t tag = nextRequestTag(reason);
+ 	DLOG("%s(%s, %x)\n", __FUNCTION__, getPowerStateString((uint32_t) ordinal), tag);
+ 
++	if (gSleepDisabledFlag && ordinal == SLEEP_STATE) {
++		ordinal = getRUN_STATE();
++	}
++
+ 	if ((ordinal != ON_STATE) && (ordinal != AOT_STATE) && (ordinal != SLEEP_STATE)) {
+ 		return kIOReturnUnsupported;
+ 	}
+diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
+index 7a32a23..fe83e3e 100644
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -370,6 +370,10 @@ IOPlatformExpert::haltRestart(unsigned int type)
+ void
+ IOPlatformExpert::sleepKernel(void)
+ {
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	IOLog("SWEET: sleepKernel blocked\n");
++	return;
++#endif
+ #if 0
+ 	long cnt;
+ 	boolean_t intState;
+diff --git a/osfmk/arm64/cpu.c b/osfmk/arm64/cpu.c
+index 94e9130..6ee88b0 100644
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -568,7 +568,7 @@ cpu_idle(void)
+ #endif /* MONOTONIC */
+ 
+ 	if (wfi) {
+-#if !defined(APPLE_ARM64_ARCH_FAMILY)
++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !defined(ARM64_BOARD_CONFIG_SWEET)
+ 		platform_cache_idle_enter();
+ #endif
+ 
