@@ -30,7 +30,7 @@ index a148608..051efd6 100644
  
  static void
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index ad0b672..a4dea4e 100644
+index ad0b672..0153332 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
 @@ -82,22 +82,68 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
@@ -43,12 +43,12 @@ index ad0b672..a4dea4e 100644
 +{
 +	if (!sweet_fb_ptr) {
 +		extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-+		sweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x1000u);
++		sweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x40000u);
 +	}
 +	if (sweet_fb_ptr) {
 +		uint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
-+		for (int y = 0; y < 30; y++) {
-+			for (int x = 0; x < 30; x++) {
++		for (int y = 0; y < 20; y++) {
++			for (int x = 0; x < 20; x++) {
 +				sweet_fb_ptr[y * 1080 + x] = color;
 +			}
 +		}
