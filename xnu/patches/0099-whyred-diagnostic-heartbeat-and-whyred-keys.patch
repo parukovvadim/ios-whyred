@@ -1,6 +1,39 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index a148608..051efd6 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -17,9 +17,9 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern void sweet_hid_key(int key, int down);
+ void sweet_keys_init(void);
+ 
+-#define KEYS_CORE_PA     0x0c440000u
+-#define KEYS_OBS_PA      0x0e600000u
+-#define KEYS_CNFG_PA     0x0c40a000u
++#define KEYS_CORE_PA     0x0800f000u
++#define KEYS_OBS_PA      0x09400000u
++#define KEYS_CNFG_PA     0x0800a000u
+ #define KEYS_PON_RT      0x0810u
+ #define KEYS_GPIO_RT     0xc110u
+ #define KEYS_NO_APID     0xffffu
+@@ -84,10 +84,9 @@ keys_read(uint16_t apid, uint16_t addr, uint8_t *out)
+ static void
+ keys_wait(void)
+ {
+-	uint64_t deadline;
+-	clock_interval_to_deadline(20, NSEC_PER_MSEC, &deadline);
+-	(void)assert_wait_deadline(&keys_sleep_chan, THREAD_UNINT, deadline);
+-	thread_block(THREAD_CONTINUE_NULL);
++	for (int i = 0; i < 20; i++) {
++		delay(1000);
++	}
+ }
+ 
+ static void
+diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
+index ad0b672..23408e7 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
-@@ -84,18 +84,35 @@
+@@ -84,18 +84,35 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
  
  extern void delay(int);
  extern void sweet_log_wakeup(void);
@@ -16,8 +49,10 @@
 +	last_vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
 +
  	while (1) {
- 		for (int i = 0; i < 1000; i++) {
- 			delay(1000);
+-		for (int i = 0; i < 1000; i++) {
+-			delay(1000);
++		for (int i = 0; i < 10; i++) {
++			delay(100000);
  		}
  		s++;
 -		printf("SWEET HB %us (vt=%llu)\n", s, (unsigned long long)os_atomic_load(&sweet_vtimer_ticks, relaxed));
@@ -37,9 +72,119 @@
  		sweet_log_wakeup();
  		if ((s % 5) == 0) {
  			wakeup(&sweet_sample_chan);
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 26ef194..b51d116 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -905,6 +905,16 @@
+@@ -170,6 +170,14 @@ dma_clean(uint32_t off, uint32_t len)
+  * them. The buffer data port (0x20) is not used: on this controller it does
+  * not advance the FIFO.
+  */
++static inline void
++sd_poll_spin(void)
++{
++	for (volatile int s = 0; s < 50; s++) {
++		__builtin_arm_isb();
++	}
++}
++
+ static void
+ sd_reset_lines(void)
+ {
+@@ -181,7 +189,7 @@ sd_reset_lines(void)
+ 		if (mach_absolute_time() > deadline) {
+ 			break;
+ 		}
+-		delay(1);
++		sd_poll_spin();
+ 	}
+ 	ufs_wr(SD_ISTS, 0xffffffff);
+ }
+@@ -226,7 +234,7 @@ sd_xfer_one(uint32_t sector, uint32_t nblocks, bool write, uint32_t bounce_off)
+ 			sd_reset_lines();
+ 			return EBUSY;
+ 		}
+-		delay(1);
++		sd_poll_spin();
+ 	}
+ 
+ 	/* 2. Wait for card to release DAT0 busy (bit 20: 1 = ready, 0 = busy programming) */
+@@ -236,7 +244,7 @@ sd_xfer_one(uint32_t sector, uint32_t nblocks, bool write, uint32_t bounce_off)
+ 			sd_reset_lines();
+ 			return EBUSY;
+ 		}
+-		delay(1);
++		sd_poll_spin();
+ 	}
+ 
+ 	uint32_t idx = write ? (nblocks > 1 ? 25 : 24) : (nblocks > 1 ? 18 : 17);
+@@ -266,7 +274,7 @@ sd_xfer_one(uint32_t sector, uint32_t nblocks, bool write, uint32_t bounce_off)
+ 			sd_reset_lines();
+ 			return ETIMEDOUT;
+ 		}
+-		delay(1);
++		sd_poll_spin();
+ 	}
+ 	ufs_wr(SD_ISTS, ists);
+ 	if (write) {
+@@ -276,7 +284,7 @@ sd_xfer_one(uint32_t sector, uint32_t nblocks, bool write, uint32_t bounce_off)
+ 				sd_reset_lines();
+ 				return ETIMEDOUT;
+ 			}
+-			delay(1);
++			sd_poll_spin();
+ 		}
+ 	}
+ 	__builtin_arm_dsb(0xf);
+@@ -457,7 +465,7 @@ sweet_ufs_close(__unused dev_t dev, __unused int flags, __unused int devtype, __
+ static void
+ sweet_ufs_strategy(buf_t bp)
+ {
+-	static int ufs_strat_count = 0;
++	static uint32_t ufs_strat_count = 0;
+ 	int error = 0;
+ 	caddr_t vaddr = NULL;
+ 	uint64_t off = (uint64_t)buf_blkno(bp) * su.secsize;
+@@ -465,10 +473,11 @@ sweet_ufs_strategy(buf_t bp)
+ 	uint64_t part_bytes = su.nblocks * UFS_BLOCK;
+ 
+ 	bool rd = buf_flags(bp) & B_READ;
++	uint32_t s_num = os_atomic_inc_orig(&ufs_strat_count, relaxed);
+ 
+-	if (ufs_strat_count < 50) {
+-		printf("SWEET UFS: strat #%d %s blk=%llu cnt=%u (off=0x%llx)\n",
+-		    ufs_strat_count, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), count, (unsigned long long)off);
++	if (s_num < 100 || (s_num % 10 == 0)) {
++		printf("SWEET UFS: strat #%u %s blk=%llu cnt=%u\n",
++		    s_num, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), count);
+ 	}
+ 
+ 	buf_setresid(bp, count);
+@@ -524,8 +533,9 @@ done:
+ 	if (error) {
+ 		buf_seterror(bp, error);
+ 	}
+-	if (ufs_strat_count < 50) {
+-		printf("SWEET UFS: strat #%d done err=%d\n", ufs_strat_count++, error);
++	if (error || s_num < 100 || (s_num % 10 == 0)) {
++		printf("SWEET UFS: strat #%u done %s blk=%llu err=%d\n",
++		    s_num, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), error);
+ 	}
+ 	buf_biodone(bp);
+ }
+@@ -810,7 +820,10 @@ sweet_log_thread(__unused void *arg, __unused wait_result_t wr)
+ 		uint64_t pos = total - flushed >= SWEET_LOG_SIZE ? total - SWEET_LOG_SIZE : flushed;
+ 		int error = 0;
+ 
+-		lck_mtx_lock(&sweet_ufs_lock);
++		if (!lck_mtx_try_lock(&sweet_ufs_lock)) {
++			(void)tsleep(&sweet_log_chan, PZERO, "sweetlog_busy", hz / 10);
++			continue;
++		}
+ 		while (pos < total && !error) {
+ 			uint32_t off = (uint32_t)(pos % SWEET_LOG_SIZE);
+ 			uint32_t blk = off / UFS_BLOCK;
+@@ -905,6 +918,16 @@ sweet_log_wakeup(void)
  	wakeup(&sweet_log_chan);
  }
  
@@ -56,9 +201,11 @@
  /* Root device for rd=ufsroot0 (IOFindBSDRoot). */
  int sweet_ufs_rootdev(dev_t *dev);
  
+diff --git a/bsd/dev/whyred_touch.c b/bsd/dev/whyred_touch.c
+index 59fb51c..bdbc49e 100644
 --- a/bsd/dev/whyred_touch.c
 +++ b/bsd/dev/whyred_touch.c
-@@ -19,7 +19,7 @@
+@@ -19,7 +19,7 @@ void whyred_touch_init(void);
  
  #define WHYRED_QUP_PA        0x0c175000u
  #define WHYRED_GCC_PA        0x00100000u
@@ -67,7 +214,7 @@
  
  #define QUP_CONFIG           0x000u
  #define QUP_STATE            0x004u
-@@ -76,13 +76,8 @@
+@@ -76,13 +76,8 @@ wt_wr(vm_offset_t base, uint32_t reg, uint32_t val)
  static void
  wt_delay_ms(uint32_t ms)
  {
@@ -83,32 +230,3 @@
  	}
  }
  
---- a/bsd/dev/sweet_keys.c
-+++ b/bsd/dev/sweet_keys.c
-@@ -17,9 +17,9 @@
- extern void sweet_hid_key(int key, int down);
- void sweet_keys_init(void);
- 
--#define KEYS_CORE_PA     0x0c440000u
--#define KEYS_OBS_PA      0x0e600000u
--#define KEYS_CNFG_PA     0x0c40a000u
-+#define KEYS_CORE_PA     0x0800f000u
-+#define KEYS_OBS_PA      0x09400000u
-+#define KEYS_CNFG_PA     0x0800a000u
- #define KEYS_PON_RT      0x0810u
- #define KEYS_GPIO_RT     0xc110u
- #define KEYS_NO_APID     0xffffu
-@@ -84,10 +84,9 @@
- static void
- keys_wait(void)
- {
--	uint64_t deadline;
--	clock_interval_to_deadline(20, NSEC_PER_MSEC, &deadline);
--	(void)assert_wait_deadline(&keys_sleep_chan, THREAD_UNINT, deadline);
--	thread_block(THREAD_CONTINUE_NULL);
-+	for (int i = 0; i < 20; i++) {
-+		delay(1000);
-+	}
- }
- 
- static void
