@@ -73,7 +73,7 @@ index ad0b672..23408e7 100644
  		if ((s % 5) == 0) {
  			wakeup(&sweet_sample_chan);
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
-index 26ef194..b51d116 100644
+index 26ef194..6ef4df5 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
 @@ -170,6 +170,14 @@ dma_clean(uint32_t off, uint32_t len)
@@ -84,7 +84,7 @@ index 26ef194..b51d116 100644
 +sd_poll_spin(void)
 +{
 +	for (volatile int s = 0; s < 50; s++) {
-+		__builtin_arm_isb();
++		__asm__ volatile("isb" ::: "memory");
 +	}
 +}
 +
