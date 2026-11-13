@@ -30,10 +30,10 @@ index a148608..051efd6 100644
  
  static void
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index ad0b672..9401a51 100644
+index ad0b672..f07a897 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
-@@ -82,22 +82,88 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
+@@ -82,22 +82,90 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
  	}
  }
  
@@ -97,7 +97,9 @@ index ad0b672..9401a51 100644
 +			if (now_pct >= target_pct) {
 +				break;
 +			}
-+			delay(20000);
++			for (volatile int i = 0; i < 5000; i++) {
++				__asm__ volatile("yield" ::: "memory");
++			}
  		}
  		s++;
 -		printf("SWEET HB %us (vt=%llu)\n", s, (unsigned long long)os_atomic_load(&sweet_vtimer_ticks, relaxed));

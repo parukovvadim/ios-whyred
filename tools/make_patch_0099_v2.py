@@ -105,7 +105,9 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 			if (now_pct >= target_pct) {
 				break;
 			}
-			delay(20000);
+			for (volatile int i = 0; i < 5000; i++) {
+				__asm__ volatile("yield" ::: "memory");
+			}
 		}
 		s++;
 		sweet_fb_indicator(s);
