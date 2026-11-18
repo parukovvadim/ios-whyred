@@ -57,8 +57,8 @@ sweet_fb_indicator(uint32_t s)
 	}
 	if (sweet_fb_ptr) {
 		uint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
-		for (int y = 0; y < 20; y++) {
-			for (int x = 0; x < 20; x++) {
+		for (int y = 10; y < 40; y++) {
+			for (int x = 1040; x < 1070; x++) {
 				sweet_fb_ptr[y * 1080 + x] = color;
 			}
 		}
@@ -130,9 +130,6 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 		    (unsigned long long)vt, (unsigned long long)d_vt,
 		    sweet_ufs_lock_is_free() ? "free" : "LOCKED");
 		sweet_log_wakeup();
-		if ((s % 3) == 0) {
-			wakeup(&sweet_sample_chan);
-		}
 	}
 }'''
         assert old_hb in c, "old_hb not found in sweet_sample.c!"
