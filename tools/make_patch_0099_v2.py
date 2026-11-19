@@ -85,6 +85,7 @@ sweet_pet_hw_watchdog(void)
 
 extern void delay(int);
 extern void sweet_log_wakeup(void);
+extern void sweet_log_append(const char *c, int size);
 extern boolean_t sweet_ufs_lock_is_free(void);
 _Atomic uint64_t sweet_vtimer_ticks = 0;
 
@@ -124,11 +125,16 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 		last_pct = pct;
 		last_vt = vt;
 
-		printf("SWEET HB %us (cpu=%u, pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
+		char hb_buf[160];
+		int hb_len = snprintf(hb_buf, sizeof(hb_buf),
+		    "SWEET HB %us (cpu=%u, pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
 		    s, cpuid,
 		    (unsigned long long)pct, (unsigned long long)d_pct,
 		    (unsigned long long)vt, (unsigned long long)d_vt,
 		    sweet_ufs_lock_is_free() ? "free" : "LOCKED");
+		if (hb_len > 0) {
+			sweet_log_append(hb_buf, hb_len);
+		}
 		sweet_log_wakeup();
 	}
 }'''
