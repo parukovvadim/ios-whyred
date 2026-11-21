@@ -1,0 +1,35 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 490bd2f..36e43d7 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7428,6 +7428,30 @@ process_signature(proc_t p, struct image_params *imgp)
+ 				goto done;
+ 			}
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
++			/* SWEET daemon blocking support via sweet_block=name1,name2 boot-arg */
++			static char sweet_block_list[256];
++			static int sweet_block_list_inited = 0;
++			if (!sweet_block_list_inited) {
++				sweet_block_list_inited = 1;
++				if (!PE_parse_boot_argn("sweet_block", sweet_block_list, sizeof(sweet_block_list))) {
++					sweet_block_list[0] = '\0';
++				}
++			}
++			if (sweet_block_list[0] && p->p_name[0]) {
++				const char *sb = sweet_block_list;
++				size_t nlen = strlen(p->p_name);
++				while (*sb) {
++					const char *comma = strchr(sb, ',');
++					size_t len = comma ? (size_t)(comma - sb) : strlen(sb);
++					if (len == nlen && strncmp(sb, p->p_name, len) == 0) {
++						printf("SWEET EXEC: BLOCKED %s per sweet_block boot-arg\n", p->p_name);
++						error = EPERM;
++						goto done;
++					}
++					if (!comma) break;
++					sb = comma + 1;
++				}
++			}
+ 			/* SWEET runs every iOS binary this way: one short line per exec. */
+ 			printf("exec %s\n", p->p_name);
+ #else

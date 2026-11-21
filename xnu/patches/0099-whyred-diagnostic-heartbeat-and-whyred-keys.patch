@@ -30,7 +30,7 @@ index a148608..051efd6 100644
  
  static void
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index ad0b672..5a47562 100644
+index ad0b672..1d5896d 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
 @@ -47,7 +47,60 @@ sweet_sample_wanted(const char *name)
@@ -169,8 +169,9 @@ index ad0b672..5a47562 100644
  		return;
  	}
  	(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 3 * hz);
- 	for (int i = 0; i < 60; i++) {
+-	for (int i = 0; i < 60; i++) {
 -		printf("SMP --- sample %d\n", i);
++	for (int i = 0; i < 600; i++) {
 +		printf("SMP --- sample %d (hb=%us)\n", i, sweet_hb_seconds);
  		proc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, sweet_sample_proc, NULL, NULL, NULL);
 -		(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 5 * hz);

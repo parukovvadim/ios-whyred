@@ -207,7 +207,7 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
 \t\treturn;
 \t}
 \t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 3 * hz);
-\tfor (int i = 0; i < 60; i++) {
+\tfor (int i = 0; i < 600; i++) {
 \t\tprintf("SMP --- sample %d (hb=%us)\\n", i, sweet_hb_seconds);
 \t\tproc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, sweet_sample_proc, NULL, NULL, NULL);
 \t\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 1 * hz);
