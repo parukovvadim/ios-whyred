@@ -10,7 +10,6 @@ def main():
     
     tmp = tempfile.mkdtemp()
     try:
-        # Copy orig tree to tmp
         shutil.copytree(orig_dir, os.path.join(tmp, 'tree'))
         tree = os.path.join(tmp, 'tree')
         
@@ -82,20 +81,28 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 \t}
 }'''
 
-        new_sample_block = '''static volatile uint32_t *sweet_fb_ptr = NULL;
-static void
-sweet_fb_indicator(uint32_t s)
+        new_sample_block = '''volatile uint32_t *sweet_fb_ptr = NULL;
+_Atomic uint32_t sweet_core_irq_counts[4] = {0, 0, 0, 0};
+
+void
+sweet_core_irq_tick(unsigned int cpuid)
 {
-\tif (!sweet_fb_ptr) {
-\t\textern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-\t\tsweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x40000u);
-\t}
-\tif (sweet_fb_ptr) {
-\t\tuint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
-\t\tfor (int y = 10; y < 40; y++) {
-\t\t\tfor (int x = 1040; x < 1070; x++) {
-\t\t\t\tsweet_fb_ptr[y * 1080 + x] = color;
+\tif (cpuid >= 4) return;
+\tuint32_t t = os_atomic_inc_orig(&sweet_core_irq_counts[cpuid], relaxed) + 1;
+
+\t/* Draw every 32 ticks (~100ms at ~300Hz timer rate) */
+\tif ((t & 31) == 0) {
+\t\tvolatile uint32_t *fb = sweet_fb_ptr;
+\t\tif (fb) {
+\t\t\t/* Blinking color: Bright Green (0x00FF00) vs Dark Green (0x002200) */
+\t\t\tuint32_t color = (t & 32) ? 0x00FF00u : 0x002200u;
+\t\t\tint x_start = 60 + (int)cpuid * 260;
+\t\t\tfor (int y = 20; y < 55; y++) {
+\t\t\t\tfor (int x = x_start; x < x_start + 160; x++) {
+\t\t\t\t\tfb[y * 1080 + x] = color;
+\t\t\t\t}
 \t\t\t}
+\t\t\t__asm__ volatile("dsb sy; isb" ::: "memory");
 \t\t}
 \t}
 }
@@ -138,6 +145,43 @@ static volatile uint32_t sweet_hb_seconds = 0;
 static int sweet_sample_chan;
 
 static void
+sweet_core_thread(void *arg, __unused wait_result_t wr)
+{
+\tunsigned int target_cpu = (unsigned int)(uintptr_t)arg;
+\tstruct processor;
+\ttypedef struct processor *processor_t;
+\textern processor_t cpu_to_processor(int cpu);
+\textern processor_t thread_bind(processor_t processor);
+
+\tif (target_cpu < 4) {
+\t\tprocessor_t p = cpu_to_processor((int)target_cpu);
+\t\tif (p) {
+\t\t\tthread_bind(p);
+\t\t}
+\t}
+
+\tstatic int core_sleep_chan[4];
+\tuint32_t cnt = 0;
+\twhile (1) {
+\t\t/* Yield CPU to userland and sleep for 250ms (hz / 4) */
+\t\t(void)tsleep(&core_sleep_chan[target_cpu], PZERO, "swcore", hz / 4);
+\t\tcnt++;
+\t\tvolatile uint32_t *fb = sweet_fb_ptr;
+\t\tif (fb) {
+\t\t\t/* Blinking color: Bright Yellow (0xFFFF00) vs Dark Yellow (0x333300) */
+\t\t\tuint32_t color = (cnt & 1) ? 0xFFFF00u : 0x333300u;
+\t\t\tint x_start = 60 + (int)target_cpu * 260;
+\t\t\tfor (int y = 65; y < 100; y++) {
+\t\t\t\tfor (int x = x_start; x < x_start + 160; x++) {
+\t\t\t\t\tfb[y * 1080 + x] = color;
+\t\t\t\t}
+\t\t\t}
+\t\t\t__asm__ volatile("dsb sy; isb" ::: "memory");
+\t\t}
+\t}
+}
+
+static void
 sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
 {
 \tif (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
@@ -150,8 +194,7 @@ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
 \tfor (int i = 0; i < 60; i++) {
 \t\tprintf("SMP --- sample %d (hb=%us)\\n", i, sweet_hb_seconds);
 \t\tproc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, sweet_sample_proc, NULL, NULL, NULL);
-\t\tsweet_log_wakeup();
-\t\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 5 * hz);
+\t\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 1 * hz);
 \t}
 }
 
@@ -159,332 +202,127 @@ static void
 sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 {
 \tuint32_t s = 0;
-\tuint64_t last_pct = 0, last_vt = 0;
-\tsweet_pet_hw_watchdog();
-\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(last_pct));
-\tlast_vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
-
+\tuint64_t last_pct = __builtin_arm_rsr64("CNTPCT_EL0");
+\tuint64_t last_vt = 0;
 \twhile (1) {
-\t\tuint64_t target_pct = last_pct + 19200000ull;
-\t\twhile (1) {
-\t\t\tuint64_t now_pct = 0;
-\t\t\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(now_pct));
-\t\t\tif (now_pct >= target_pct) {
-\t\t\t\tbreak;
-\t\t\t}
-\t\t\tfor (volatile int i = 0; i < 5000; i++) {
-\t\t\t\t__asm__ volatile("yield" ::: "memory");
-\t\t\t}
+\t\tfor (int i = 0; i < 1000; i++) {
+\t\t\tdelay(1000);
 \t\t}
 \t\ts++;
 \t\tsweet_hb_seconds = s;
-\t\tsweet_fb_indicator(s);
 \t\tsweet_pet_hw_watchdog();
-
-\t\tuint64_t pct = 0;
-\t\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(pct));
-\t\tuint64_t vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
-\t\tuint64_t mpidr = 0;
-\t\t__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-\t\tuint32_t cpuid = (uint32_t)(mpidr & 0xFF);
-\t\tuint64_t d_pct = pct - last_pct;
-\t\tuint64_t d_vt = vt - last_vt;
-\t\tlast_pct = pct;
-\t\tlast_vt = vt;
-
-\t\tchar hb_buf[160];
-\t\tint hb_len = snprintf(hb_buf, sizeof(hb_buf),
-\t\t    "SWEET HB %us (cpu=%u, pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
-\t\t    s, cpuid,
-\t\t    (unsigned long long)pct, (unsigned long long)d_pct,
-\t\t    (unsigned long long)vt, (unsigned long long)d_vt,
-\t\t    sweet_ufs_lock_is_free() ? "free" : "LOCKED");
-\t\tif (hb_len > 0) {
-\t\t\tsweet_log_append(hb_buf, hb_len);
-\t\t}
+\t\tuint64_t cur_pct = __builtin_arm_rsr64("CNTPCT_EL0");
+\t\tuint64_t cur_vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
+\t\tunsigned int cpu = 0;
+\t\t__asm__ volatile("mrs %0, mpidr_el1" : "=r"(cpu));
+\t\tcpu &= 0xFF;
+\t\tboolean_t free = sweet_ufs_lock_is_free();
+\t\tuint32_t i0 = os_atomic_load(&sweet_core_irq_counts[0], relaxed);
+\t\tuint32_t i1 = os_atomic_load(&sweet_core_irq_counts[1], relaxed);
+\t\tuint32_t i2 = os_atomic_load(&sweet_core_irq_counts[2], relaxed);
+\t\tuint32_t i3 = os_atomic_load(&sweet_core_irq_counts[3], relaxed);
+\t\tprintf("SWEET HB %us (cpu=%u, irq=[%u,%u,%u,%u], pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
+\t\t\ts, cpu, i0, i1, i2, i3,
+\t\t\t(unsigned long long)cur_pct, (unsigned long long)(cur_pct - last_pct),
+\t\t\t(unsigned long long)cur_vt, (unsigned long long)(cur_vt - last_vt),
+\t\t\tfree ? "free" : "LOCKED");
+\t\tlast_pct = cur_pct;
+\t\tlast_vt = cur_vt;
 \t\tsweet_log_wakeup();
-\t\tif ((s % 5) == 0 || s >= 20) {
+\t\tif (s >= 20) {
 \t\t\twakeup(&sweet_sample_chan);
 \t\t}
 \t}
 }'''
         assert old_sample_block in c, "old_sample_block not found in sweet_sample.c!"
         c = c.replace(old_sample_block, new_sample_block)
+
+        old_start = '''void
+sweet_sample_start(void)
+{
+\tthread_t thread;
+\tif (kernel_thread_start(sweet_hb_thread, NULL, &thread) == KERN_SUCCESS) {
+\t\tthread_deallocate(thread);
+\t}
+\tif (kernel_thread_start(sweet_sample_thread, NULL, &thread) == KERN_SUCCESS) {
+\t\tthread_deallocate(thread);
+\t}
+}'''
+
+        new_start = '''void
+sweet_sample_start(void)
+{
+\tif (!sweet_fb_ptr) {
+\t\textern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+\t\tsweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x100000u);
+\t}
+
+\tthread_t thread;
+\tif (kernel_thread_start(sweet_hb_thread, NULL, &thread) == KERN_SUCCESS) {
+\t\tthread_deallocate(thread);
+\t}
+\tfor (uintptr_t c = 0; c < 4; c++) {
+\t\tif (kernel_thread_start(sweet_core_thread, (void *)c, &thread) == KERN_SUCCESS) {
+\t\t\tthread_deallocate(thread);
+\t\t}
+\t}
+\tif (kernel_thread_start(sweet_sample_thread, NULL, &thread) == KERN_SUCCESS) {
+\t\tthread_deallocate(thread);
+\t}
+}'''
+        assert old_start in c, "old_start not found in sweet_sample.c!"
+        c = c.replace(old_start, new_start)
+
         with open(sample_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(c)
         print("[+] sweet_sample.c modified")
 
-        # 2. Modify sweet_ufs.c
+        # 2. Modify sleh.c
+        sleh_path = os.path.join(tree, 'osfmk', 'arm64', 'sleh.c')
+        with open(sleh_path, 'r', encoding='utf-8') as f:
+            sc = f.read()
+
+        old_sleh_block = '''\tif (intid == sweet_vtimer_intid) {
+\t\tos_atomic_inc(&sweet_vtimer_ticks, relaxed);
+\t\tsleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);'''
+
+        new_sleh_block = '''\tif (intid == sweet_vtimer_intid) {
+\t\tos_atomic_inc(&sweet_vtimer_ticks, relaxed);
+\t\textern void sweet_core_irq_tick(unsigned int cpuid);
+\t\tsweet_core_irq_tick((unsigned int)cdp->cpu_number);
+\t\tsleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);'''
+        assert old_sleh_block in sc, "old_sleh_block not found in sleh.c!"
+        sc = sc.replace(old_sleh_block, new_sleh_block)
+
+        with open(sleh_path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(sc)
+        print("[+] sleh.c modified")
+
+        # 3. Modify sweet_ufs.c
         ufs_path = os.path.join(tree, 'bsd', 'dev', 'sweet_ufs.c')
         with open(ufs_path, 'r', encoding='utf-8') as f:
             c = f.read()
 
-        # 2a. Add sd_poll_spin before sd_reset_lines
-        old_sd_reset = '''static void
-sd_reset_lines(void)
-{
-	uint64_t deadline;
-	nanoseconds_to_absolutetime(100ull * NSEC_PER_MSEC, &deadline);
-	deadline += mach_absolute_time();
-	ufs_wr(SD_CLK, ufs_rd(SD_CLK) | (6u << 24));    /* SRST_CMD | SRST_DAT */
-	while ((ufs_rd(SD_CLK) >> 24) & 6) {
-		if (mach_absolute_time() > deadline) {
-			break;
-		}
-		delay(1);
-	}
-	ufs_wr(SD_ISTS, 0xffffffff);
-}'''
-
-        new_sd_reset = '''static inline void
-sd_poll_spin(void)
-{
-	for (volatile int s = 0; s < 50; s++) {
-		__asm__ volatile("isb" ::: "memory");
-	}
-}
-
-static void
-sd_reset_lines(void)
-{
-	uint64_t deadline;
-	nanoseconds_to_absolutetime(100ull * NSEC_PER_MSEC, &deadline);
-	deadline += mach_absolute_time();
-	ufs_wr(SD_CLK, ufs_rd(SD_CLK) | (6u << 24));    /* SRST_CMD | SRST_DAT */
-	while ((ufs_rd(SD_CLK) >> 24) & 6) {
-		if (mach_absolute_time() > deadline) {
-			break;
-		}
-		sd_poll_spin();
-	}
-	ufs_wr(SD_ISTS, 0xffffffff);
-}'''
-        assert old_sd_reset in c, "old_sd_reset not found in sweet_ufs.c!"
-        c = c.replace(old_sd_reset, new_sd_reset)
-
-        # 2b. In sd_xfer_one replace the remaining 4 delay(1) with sd_poll_spin()
-        old_xfer_body = '''	/* 1. Wait for CMD (0x1), DAT (0x2), and DAT active (0x4) lines to be free */
-	while (ufs_rd(SD_PRES) & 7) {
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: inhibit stuck before CMD, state %08x\\n", ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EBUSY;
-		}
-		delay(1);
-	}
-
-	/* 2. Wait for card to release DAT0 busy (bit 20: 1 = ready, 0 = busy programming) */
-	while (!(ufs_rd(SD_PRES) & (1u << 20))) {
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: card busy on DAT0 before CMD, state %08x\\n", ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EBUSY;
-		}
-		delay(1);
-	}
-
-	uint32_t idx = write ? (nblocks > 1 ? 25 : 24) : (nblocks > 1 ? 18 : 17);
-	uint32_t tm = 0x03 | (nblocks > 1 ? 0x24 : 0) | (write ? 0 : 0x10);
-	ufs_wr(SD_ISTS, 0xffffffff);
-	ufs_wr(SD_ADMA_LO, (uint32_t)(su.dma_pa + DMA_UCD));
-	ufs_wr(SD_ADMA_HI, (uint32_t)((su.dma_pa + DMA_UCD) >> 32));
-	ufs_wr(SD_BLK, (nblocks << 16) | UFS_BLOCK);
-	ufs_wr(SD_ARG, sector);
-	ufs_wr(SD_CMD, (((idx << 8) | 0x3au) << 16) | tm);   /* R1, CRC+index check, data present */
-
-	uint32_t ists;
-	for (;;) {
-		ists = ufs_rd(SD_ISTS);
-		if (ists & (1u << 15)) {  /* Error Interrupt */
-			printf("SWEET SDHCI: CMD%u sector 0x%x x%u failed, ISTS %08x ADMAERR %08x STATE %08x\\n",
-			    idx, sector, nblocks, ists, ufs_rd(SD_ADMA_ERR), ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EIO;
-		}
-		if (ists & 2u) {                        /* transfer complete */
-			break;
-		}
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: CMD%u sector 0x%x timed out, ISTS %08x STATE %08x ADMAERR %08x\\n",
-			    idx, sector, ists, ufs_rd(SD_PRES), ufs_rd(SD_ADMA_ERR));
-			sd_reset_lines();
-			return ETIMEDOUT;
-		}
-		delay(1);
-	}
-	ufs_wr(SD_ISTS, ists);
-	if (write) {
-		while (!(ufs_rd(SD_PRES) & (1u << 20))) {       /* DAT0 low: card busy programming */
-			if (mach_absolute_time() > deadline) {
-				printf("SWEET SDHCI: write busy timeout on sector 0x%x\\n", sector);
-				sd_reset_lines();
-				return ETIMEDOUT;
-			}
-			delay(1);
-		}
-	}'''
-
-        new_xfer_body = '''	/* 1. Wait for CMD (0x1), DAT (0x2), and DAT active (0x4) lines to be free */
-	while (ufs_rd(SD_PRES) & 7) {
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: inhibit stuck before CMD, state %08x\\n", ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EBUSY;
-		}
-		sd_poll_spin();
-	}
-
-	/* 2. Wait for card to release DAT0 busy (bit 20: 1 = ready, 0 = busy programming) */
-	while (!(ufs_rd(SD_PRES) & (1u << 20))) {
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: card busy on DAT0 before CMD, state %08x\\n", ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EBUSY;
-		}
-		sd_poll_spin();
-	}
-
-	uint32_t idx = write ? (nblocks > 1 ? 25 : 24) : (nblocks > 1 ? 18 : 17);
-	uint32_t tm = 0x03 | (nblocks > 1 ? 0x24 : 0) | (write ? 0 : 0x10);
-	ufs_wr(SD_ISTS, 0xffffffff);
-	ufs_wr(SD_ADMA_LO, (uint32_t)(su.dma_pa + DMA_UCD));
-	ufs_wr(SD_ADMA_HI, (uint32_t)((su.dma_pa + DMA_UCD) >> 32));
-	ufs_wr(SD_BLK, (nblocks << 16) | UFS_BLOCK);
-	ufs_wr(SD_ARG, sector);
-	ufs_wr(SD_CMD, (((idx << 8) | 0x3au) << 16) | tm);   /* R1, CRC+index check, data present */
-
-	uint32_t ists;
-	for (;;) {
-		ists = ufs_rd(SD_ISTS);
-		if (ists & (1u << 15)) {  /* Error Interrupt */
-			printf("SWEET SDHCI: CMD%u sector 0x%x x%u failed, ISTS %08x ADMAERR %08x STATE %08x\\n",
-			    idx, sector, nblocks, ists, ufs_rd(SD_ADMA_ERR), ufs_rd(SD_PRES));
-			sd_reset_lines();
-			return EIO;
-		}
-		if (ists & 2u) {                        /* transfer complete */
-			break;
-		}
-		if (mach_absolute_time() > deadline) {
-			printf("SWEET SDHCI: CMD%u sector 0x%x timed out, ISTS %08x STATE %08x ADMAERR %08x\\n",
-			    idx, sector, ists, ufs_rd(SD_PRES), ufs_rd(SD_ADMA_ERR));
-			sd_reset_lines();
-			return ETIMEDOUT;
-		}
-		sd_poll_spin();
-	}
-	ufs_wr(SD_ISTS, ists);
-	if (write) {
-		while (!(ufs_rd(SD_PRES) & (1u << 20))) {       /* DAT0 low: card busy programming */
-			if (mach_absolute_time() > deadline) {
-				printf("SWEET SDHCI: write busy timeout on sector 0x%x\\n", sector);
-				sd_reset_lines();
-				return ETIMEDOUT;
-			}
-			sd_poll_spin();
-		}
-	}'''
-        assert old_xfer_body in c, "old_xfer_body not found in sweet_ufs.c!"
-        c = c.replace(old_xfer_body, new_xfer_body)
-
-        # 2c. Modify sweet_ufs_strategy logging
-        old_strat_start = '''static void
-sweet_ufs_strategy(buf_t bp)
-{
-	static int ufs_strat_count = 0;
-	int error = 0;
-	caddr_t vaddr = NULL;
-	uint64_t off = (uint64_t)buf_blkno(bp) * su.secsize;
-	uint32_t count = buf_count(bp);
-	uint64_t part_bytes = su.nblocks * UFS_BLOCK;
-
-	bool rd = buf_flags(bp) & B_READ;
-
-	if (ufs_strat_count < 50) {
-		printf("SWEET UFS: strat #%d %s blk=%llu cnt=%u (off=0x%llx)\\n",
-		    ufs_strat_count, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), count, (unsigned long long)off);
-	}'''
-
-        new_strat_start = '''static void
-sweet_ufs_strategy(buf_t bp)
-{
-	static uint32_t ufs_strat_count = 0;
-	int error = 0;
-	caddr_t vaddr = NULL;
-	uint64_t off = (uint64_t)buf_blkno(bp) * su.secsize;
-	uint32_t count = buf_count(bp);
-	uint64_t part_bytes = su.nblocks * UFS_BLOCK;
-
-	bool rd = buf_flags(bp) & B_READ;
-	uint32_t s_num = os_atomic_inc_orig(&ufs_strat_count, relaxed);
-
-	if (s_num < 100 || (s_num % 10 == 0)) {
-		printf("SWEET UFS: strat #%u %s blk=%llu cnt=%u\\n",
-		    s_num, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), count);
-	}'''
-        assert old_strat_start in c, "old_strat_start not found in sweet_ufs.c!"
-        c = c.replace(old_strat_start, new_strat_start)
-
-        old_strat_done = '''done:
-	if (error) {
-		buf_seterror(bp, error);
-	}
-	if (ufs_strat_count < 50) {
-		printf("SWEET UFS: strat #%d done err=%d\\n", ufs_strat_count++, error);
-	}
-	buf_biodone(bp);'''
-
-        new_strat_done = '''done:
-	if (error) {
-		buf_seterror(bp, error);
-	}
-	if (error || s_num < 100 || (s_num % 10 == 0)) {
-		printf("SWEET UFS: strat #%u done %s blk=%llu err=%d\\n",
-		    s_num, rd ? "R" : "W", (unsigned long long)buf_blkno(bp), error);
-	}
-	buf_biodone(bp);'''
-        assert old_strat_done in c, "old_strat_done not found in sweet_ufs.c!"
-        c = c.replace(old_strat_done, new_strat_done)
-
-        # 2d. In sweet_log_thread use lck_mtx_try_lock
-        old_log_lock = '''		uint64_t pos = total - flushed >= SWEET_LOG_SIZE ? total - SWEET_LOG_SIZE : flushed;
-		int error = 0;
-
-		lck_mtx_lock(&sweet_ufs_lock);
-		while (pos < total && !error) {'''
-
-        new_log_lock = '''		uint64_t pos = total - flushed >= SWEET_LOG_SIZE ? total - SWEET_LOG_SIZE : flushed;
-		int error = 0;
-
-		if (!lck_mtx_try_lock(&sweet_ufs_lock)) {
-			(void)tsleep(&sweet_log_chan, PZERO, "sweetlog_busy", hz / 10);
-			continue;
-		}
-		while (pos < total && !error) {'''
-        assert old_log_lock in c, "old_log_lock not found in sweet_ufs.c!"
-        c = c.replace(old_log_lock, new_log_lock)
-
-        # 2e. Add sweet_ufs_lock_is_free
         old_wakeup = '''void
 sweet_log_wakeup(void)
 {
-	wakeup(&sweet_log_chan);
+\twakeup(&sweet_log_chan);
 }'''
 
         new_wakeup = '''void
 sweet_log_wakeup(void)
 {
-	wakeup(&sweet_log_chan);
+\twakeup(&sweet_log_chan);
 }
 
 boolean_t
 sweet_ufs_lock_is_free(void)
 {
-	if (lck_mtx_try_lock(&sweet_ufs_lock)) {
-		lck_mtx_unlock(&sweet_ufs_lock);
-		return TRUE;
-	}
-	return FALSE;
+\tif (lck_mtx_try_lock(&sweet_ufs_lock)) {
+\t\tlck_mtx_unlock(&sweet_ufs_lock);
+\t\treturn TRUE;
+\t}
+\treturn FALSE;
 }'''
         assert old_wakeup in c, "old_wakeup not found in sweet_ufs.c!"
         c = c.replace(old_wakeup, new_wakeup)
@@ -493,7 +331,7 @@ sweet_ufs_lock_is_free(void)
             f.write(c)
         print("[+] sweet_ufs.c modified")
 
-        # 3. Modify whyred_touch.c
+        # 4. Modify whyred_touch.c
         touch_path = os.path.join(tree, 'bsd', 'dev', 'whyred_touch.c')
         with open(touch_path, 'r', encoding='utf-8') as f:
             c = f.read()
@@ -506,22 +344,22 @@ sweet_ufs_lock_is_free(void)
         old_wtdelay = '''static void
 wt_delay_ms(uint32_t ms)
 {
-	extern int hz;
-	if (hz > 0 && ms >= 10) {
-		uint32_t ticks = (ms * (uint32_t)hz) / 1000u;
-		if (ticks < 1) ticks = 1;
-		(void)tsleep(&wt_sleep_chan, PZERO, "wttouch", ticks);
-	} else {
-		delay(ms * 1000);
-	}
+\textern int hz;
+\tif (hz > 0 && ms >= 10) {
+\t\tuint32_t ticks = (ms * (uint32_t)hz) / 1000u;
+\t\tif (ticks < 1) ticks = 1;
+\t\t(void)tsleep(&wt_sleep_chan, PZERO, "wttouch", ticks);
+\t} else {
+\t\tdelay(ms * 1000);
+\t}
 }'''
 
         new_wtdelay = '''static void
 wt_delay_ms(uint32_t ms)
 {
-	for (uint32_t i = 0; i < ms; i++) {
-		delay(1000);
-	}
+\tfor (uint32_t i = 0; i < ms; i++) {
+\t\tdelay(1000);
+\t}
 }'''
         assert old_wtdelay in c, 'old_wtdelay not found in whyred_touch.c!'
         c = c.replace(old_wtdelay, new_wtdelay)
@@ -530,7 +368,7 @@ wt_delay_ms(uint32_t ms)
             f.write(c)
         print("[+] whyred_touch.c modified")
 
-        # 4. Modify sweet_keys.c
+        # 5. Modify sweet_keys.c
         keys_path = os.path.join(tree, 'bsd', 'dev', 'sweet_keys.c')
         with open(keys_path, 'r', encoding='utf-8') as f:
             c = f.read()
@@ -548,18 +386,18 @@ wt_delay_ms(uint32_t ms)
         old_keys_wait = '''static void
 keys_wait(void)
 {
-	uint64_t deadline;
-	clock_interval_to_deadline(20, NSEC_PER_MSEC, &deadline);
-	(void)assert_wait_deadline(&keys_sleep_chan, THREAD_UNINT, deadline);
-	thread_block(THREAD_CONTINUE_NULL);
+\tuint64_t deadline;
+\tclock_interval_to_deadline(20, NSEC_PER_MSEC, &deadline);
+\t(void)assert_wait_deadline(&keys_sleep_chan, THREAD_UNINT, deadline);
+\tthread_block(THREAD_CONTINUE_NULL);
 }'''
 
         new_keys_wait = '''static void
 keys_wait(void)
 {
-	for (int i = 0; i < 20; i++) {
-		delay(1000);
-	}
+\tfor (int i = 0; i < 20; i++) {
+\t\tdelay(1000);
+\t}
 }'''
         assert old_keys_wait in c, 'old_keys_wait not found in sweet_keys.c!'
         c = c.replace(old_keys_wait, new_keys_wait)
@@ -568,7 +406,7 @@ keys_wait(void)
             f.write(c)
         print("[+] sweet_keys.c modified")
 
-        # 5. Modify sweet_early.c
+        # 6. Modify sweet_early.c
         early_path = os.path.join(tree, 'osfmk', 'arm64', 'sweet_early.c')
         with open(early_path, 'r', encoding='utf-8') as f:
             ec = f.read()
@@ -583,14 +421,18 @@ sweet_early_panic(const char *fmt, va_list *args)
         new_early_panic = '''void
 sweet_early_panic(const char *fmt, va_list *args)
 {
-\tvolatile uint32_t *fb = early_fb;
+\textern volatile uint32_t *sweet_fb_ptr;
+\tvolatile uint32_t *fb = sweet_fb_ptr;
+\tif (!fb) {
+\t\tfb = early_fb;
+\t}
 \tif (!fb) {
 \t\tfb = (volatile uint32_t *)(uintptr_t)0x9c000000;
 \t}
 \tif (fb) {
-\t\tfor (unsigned int y = 10; y < 40; y++) {
-\t\t\tfor (unsigned int x = 1040; x < 1070; x++) {
-\t\t\t\tfb[y * EARLY_STRIDE + x] = 0x00FF0000u; /* RED */
+\t\tfor (unsigned int y = 10; y < 110; y++) {
+\t\t\tfor (unsigned int x = 20; x < 1060; x++) {
+\t\t\t\tfb[y * 1080 + x] = 0x00FF0000u; /* RED */
 \t\t\t}
 \t\t}
 \t\t__asm__ volatile("dsb sy; isb" ::: "memory");
