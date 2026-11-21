@@ -114,14 +114,25 @@ sweet_pet_hw_watchdog(void)
 \tif (!sweet_wdt_ptr) {
 \t\textern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 \t\tsweet_wdt_ptr = (volatile uint32_t *)ml_io_map(0x17817000u, 0x1000u);
-\t\tif (sweet_wdt_ptr) {
-\t\t\tsweet_wdt_ptr[0x08 / 4] = 0;
-\t\t\tprintf("SWEET WDT: disabled APSS HW watchdog at 0x17817000\\n");
-\t\t}
 \t}
 \tif (sweet_wdt_ptr) {
-\t\tsweet_wdt_ptr[0x08 / 4] = 0;
-\t\tsweet_wdt_ptr[0x04 / 4] = 1;
+\t\t/* Pure read-only dump of APSS WDT MMIO registers (0x00 .. 0x5C) */
+\t\tuint32_t w00 = sweet_wdt_ptr[0x00 / 4];
+\t\tuint32_t w04 = sweet_wdt_ptr[0x04 / 4];
+\t\tuint32_t w08 = sweet_wdt_ptr[0x08 / 4];
+\t\tuint32_t w0c = sweet_wdt_ptr[0x0C / 4];
+\t\tuint32_t w10 = sweet_wdt_ptr[0x10 / 4];
+\t\tuint32_t w14 = sweet_wdt_ptr[0x14 / 4];
+
+\t\tuint32_t w38 = sweet_wdt_ptr[0x38 / 4];
+\t\tuint32_t w40 = sweet_wdt_ptr[0x40 / 4];
+\t\tuint32_t w44 = sweet_wdt_ptr[0x44 / 4];
+\t\tuint32_t w4c = sweet_wdt_ptr[0x4C / 4];
+\t\tuint32_t w5c = sweet_wdt_ptr[0x5C / 4];
+
+\t\tprintf("SWEET WDT[00..14]: %x %x %x %x %x %x [38..5C]: %x %x %x %x %x\\n",
+\t\t\tw00, w04, w08, w0c, w10, w14,
+\t\t\tw38, w40, w44, w4c, w5c);
 \t}
 }
 
