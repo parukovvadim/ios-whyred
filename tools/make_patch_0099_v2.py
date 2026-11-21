@@ -171,23 +171,28 @@ sweet_core_thread(void *arg, __unused wait_result_t wr)
 \t\t}
 \t}
 
-\tstatic int core_sleep_chan[4];
+\textern void thread_yield_to_preemption(void);
 \tuint32_t cnt = 0;
 \twhile (1) {
-\t\t/* Yield CPU to userland and sleep for 250ms (hz / 4) */
-\t\t(void)tsleep(&core_sleep_chan[target_cpu], PZERO, "swcore", hz / 4);
+\t\t/* Active busy-wait on this core with interrupts enabled: no sleep, no idle */
+\t\tfor (int i = 0; i < 10; i++) {
+\t\t\tdelay(1000);
+\t\t\tthread_yield_to_preemption();
+\t\t}
 \t\tcnt++;
-\t\tvolatile uint32_t *fb = sweet_fb_ptr;
-\t\tif (fb) {
-\t\t\t/* Blinking color: Bright Yellow (0xFFFF00) vs Dark Yellow (0x333300) */
-\t\t\tuint32_t color = (cnt & 1) ? 0xFFFF00u : 0x333300u;
-\t\t\tint x_start = 60 + (int)target_cpu * 260;
-\t\t\tfor (int y = 65; y < 100; y++) {
-\t\t\t\tfor (int x = x_start; x < x_start + 160; x++) {
-\t\t\t\t\tfb[y * 1080 + x] = color;
+\t\tif ((cnt % 25) == 0) {
+\t\t\tvolatile uint32_t *fb = sweet_fb_ptr;
+\t\t\tif (fb) {
+\t\t\t\t/* Blinking color: Bright Yellow (0xFFFF00) vs Dark Yellow (0x333300) */
+\t\t\t\tuint32_t color = ((cnt / 25) & 1) ? 0xFFFF00u : 0x333300u;
+\t\t\t\tint x_start = 60 + (int)target_cpu * 260;
+\t\t\t\tfor (int y = 65; y < 100; y++) {
+\t\t\t\t\tfor (int x = x_start; x < x_start + 160; x++) {
+\t\t\t\t\t\tfb[y * 1080 + x] = color;
+\t\t\t\t\t}
 \t\t\t\t}
+\t\t\t\t__asm__ volatile("dsb sy; isb" ::: "memory");
 \t\t\t}
-\t\t\t__asm__ volatile("dsb sy; isb" ::: "memory");
 \t\t}
 \t}
 }
@@ -218,6 +223,7 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 \twhile (1) {
 \t\tfor (int i = 0; i < 1000; i++) {
 \t\t\tdelay(1000);
+\t\t\tthread_yield_to_preemption();
 \t\t}
 \t\ts++;
 \t\tsweet_hb_seconds = s;

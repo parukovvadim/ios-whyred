@@ -1,0 +1,29 @@
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -2079,6 +2079,8 @@
+ 	AggressivesRequest *    request;
+ 	bool                    found = false;
+ 
++	IOLog("SWEET PM: setAggressiveness type=%lu value=%lu options=0x%x\n", type, value, (unsigned int)options);
++
+ 	if ((type > UINT_MAX) || (value > UINT_MAX)) {
+ 		return kIOReturnBadArgument;
+ 	}
+@@ -4079,6 +4081,8 @@
+ {
+ 	uint32_t tag = nextRequestTag(reason);
+ 	DLOG("%s(%s, %x)\n", __FUNCTION__, getPowerStateString((uint32_t) ordinal), tag);
++	IOLog("SWEET PM: changePowerStateWithTagTo ordinal=%s (%u) reason=%u tag=0x%x\n",
++	    getPowerStateString((uint32_t) ordinal), (uint32_t) ordinal, (uint32_t) reason, tag);
+ 
+ 	if (gSleepDisabledFlag && ordinal == SLEEP_STATE) {
+ 		ordinal = getRUN_STATE();
+@@ -4097,6 +4101,8 @@
+ {
+ 	uint32_t tag = nextRequestTag(reason);
+ 	DLOG("%s(%s, %x)\n", __FUNCTION__, getPowerStateString((uint32_t) ordinal), tag);
++	IOLog("SWEET PM: changePowerStateWithTagToPriv ordinal=%s (%u) reason=%u tag=0x%x\n",
++	    getPowerStateString((uint32_t) ordinal), (uint32_t) ordinal, (uint32_t) reason, tag);
+ 
+ 	if (gSleepDisabledFlag && ordinal == SLEEP_STATE) {
+ 		ordinal = getRUN_STATE();

@@ -30,7 +30,7 @@ index a148608..051efd6 100644
  
  static void
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index ad0b672..940f4d4 100644
+index ad0b672..5a47562 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
 @@ -47,7 +47,60 @@ sweet_sample_wanted(const char *name)
@@ -95,7 +95,7 @@ index ad0b672..940f4d4 100644
  
  static int
  sweet_sample_proc(proc_t p, __unused void *arg)
-@@ -55,49 +108,105 @@ sweet_sample_proc(proc_t p, __unused void *arg)
+@@ -55,49 +108,111 @@ sweet_sample_proc(proc_t p, __unused void *arg)
  	char name[32];
  	proc_name(proc_pid(p), name, sizeof(name));
  	if (sweet_sample_wanted(name)) {
@@ -132,23 +132,28 @@ index ad0b672..940f4d4 100644
 +		}
 +	}
 +
-+	static int core_sleep_chan[4];
++	extern void thread_yield_to_preemption(void);
 +	uint32_t cnt = 0;
 +	while (1) {
-+		/* Yield CPU to userland and sleep for 250ms (hz / 4) */
-+		(void)tsleep(&core_sleep_chan[target_cpu], PZERO, "swcore", hz / 4);
++		/* Active busy-wait on this core with interrupts enabled: no sleep, no idle */
++		for (int i = 0; i < 10; i++) {
++			delay(1000);
++			thread_yield_to_preemption();
++		}
 +		cnt++;
-+		volatile uint32_t *fb = sweet_fb_ptr;
-+		if (fb) {
-+			/* Blinking color: Bright Yellow (0xFFFF00) vs Dark Yellow (0x333300) */
-+			uint32_t color = (cnt & 1) ? 0xFFFF00u : 0x333300u;
-+			int x_start = 60 + (int)target_cpu * 260;
-+			for (int y = 65; y < 100; y++) {
-+				for (int x = x_start; x < x_start + 160; x++) {
-+					fb[y * 1080 + x] = color;
++		if ((cnt % 25) == 0) {
++			volatile uint32_t *fb = sweet_fb_ptr;
++			if (fb) {
++				/* Blinking color: Bright Yellow (0xFFFF00) vs Dark Yellow (0x333300) */
++				uint32_t color = ((cnt / 25) & 1) ? 0xFFFF00u : 0x333300u;
++				int x_start = 60 + (int)target_cpu * 260;
++				for (int y = 65; y < 100; y++) {
++					for (int x = x_start; x < x_start + 160; x++) {
++						fb[y * 1080 + x] = color;
++					}
 +				}
++				__asm__ volatile("dsb sy; isb" ::: "memory");
 +			}
-+			__asm__ volatile("dsb sy; isb" ::: "memory");
 +		}
 +	}
 +}
@@ -186,6 +191,7 @@ index ad0b672..940f4d4 100644
  	while (1) {
  		for (int i = 0; i < 1000; i++) {
  			delay(1000);
++			thread_yield_to_preemption();
  		}
  		s++;
 -		printf("SWEET HB %us (vt=%llu)\n", s, (unsigned long long)os_atomic_load(&sweet_vtimer_ticks, relaxed));
@@ -214,7 +220,7 @@ index ad0b672..940f4d4 100644
  			wakeup(&sweet_sample_chan);
  		}
  	}
-@@ -106,10 +215,20 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
+@@ -106,10 +221,20 @@ sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
  void
  sweet_sample_start(void)
  {
