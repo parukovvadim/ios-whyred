@@ -26,61 +26,80 @@ def main():
         with open(sample_path, 'r', encoding='utf-8') as f:
             c = f.read()
 
-        old_hb = '''extern void delay(int);
+        old_sample_block = '''static int sweet_sample_chan;
+
+static void
+sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
+{
+\tif (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
+\t\tstrlcpy(sweet_sample_names, "SpringBoard,backboardd,launchd,lsd,containermanagerd", sizeof(sweet_sample_names));
+\t}
+\tif (sweet_sample_names[0] == '-') {
+\t\treturn;
+\t}
+\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 3 * hz);
+\tfor (int i = 0; i < 60; i++) {
+\t\tprintf("SMP --- sample %d\\n", i);
+\t\tproc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, sweet_sample_proc, NULL, NULL, NULL);
+\t\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 5 * hz);
+\t}
+}
+
+extern void delay(int);
 extern void sweet_log_wakeup(void);
 _Atomic uint64_t sweet_vtimer_ticks = 0;
 
 static void
 sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 {
-	uint32_t s = 0;
-	while (1) {
-		for (int i = 0; i < 1000; i++) {
-			delay(1000);
-		}
-		s++;
-		printf("SWEET HB %us (vt=%llu)\\n", s, (unsigned long long)os_atomic_load(&sweet_vtimer_ticks, relaxed));
-		sweet_log_wakeup();
-		if ((s % 5) == 0) {
-			wakeup(&sweet_sample_chan);
-		}
-	}
+\tuint32_t s = 0;
+\twhile (1) {
+\t\tfor (int i = 0; i < 1000; i++) {
+\t\t\tdelay(1000);
+\t\t}
+\t\ts++;
+\t\tprintf("SWEET HB %us (vt=%llu)\\n", s, (unsigned long long)os_atomic_load(&sweet_vtimer_ticks, relaxed));
+\t\tsweet_log_wakeup();
+\t\tif ((s % 5) == 0) {
+\t\t\twakeup(&sweet_sample_chan);
+\t\t}
+\t}
 }'''
 
-        new_hb = '''static volatile uint32_t *sweet_fb_ptr = NULL;
+        new_sample_block = '''static volatile uint32_t *sweet_fb_ptr = NULL;
 static void
 sweet_fb_indicator(uint32_t s)
 {
-	if (!sweet_fb_ptr) {
-		extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-		sweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x40000u);
-	}
-	if (sweet_fb_ptr) {
-		uint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
-		for (int y = 10; y < 40; y++) {
-			for (int x = 1040; x < 1070; x++) {
-				sweet_fb_ptr[y * 1080 + x] = color;
-			}
-		}
-	}
+\tif (!sweet_fb_ptr) {
+\t\textern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+\t\tsweet_fb_ptr = (volatile uint32_t *)ml_io_map(0x9d400000u, 0x40000u);
+\t}
+\tif (sweet_fb_ptr) {
+\t\tuint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
+\t\tfor (int y = 10; y < 40; y++) {
+\t\t\tfor (int x = 1040; x < 1070; x++) {
+\t\t\tsweet_fb_ptr[y * 1080 + x] = color;
+\t\t\t}
+\t\t}
+\t}
 }
 
 static volatile uint32_t *sweet_wdt_ptr = NULL;
 static void
 sweet_pet_hw_watchdog(void)
 {
-	if (!sweet_wdt_ptr) {
-		extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-		sweet_wdt_ptr = (volatile uint32_t *)ml_io_map(0x17817000u, 0x1000u);
-		if (sweet_wdt_ptr) {
-			sweet_wdt_ptr[0x08 / 4] = 0;
-			printf("SWEET WDT: disabled APSS HW watchdog at 0x17817000\\n");
-		}
-	}
-	if (sweet_wdt_ptr) {
-		sweet_wdt_ptr[0x08 / 4] = 0;
-		sweet_wdt_ptr[0x04 / 4] = 1;
-	}
+\tif (!sweet_wdt_ptr) {
+\t\textern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+\t\tsweet_wdt_ptr = (volatile uint32_t *)ml_io_map(0x17817000u, 0x1000u);
+\t\tif (sweet_wdt_ptr) {
+\t\t\tsweet_wdt_ptr[0x08 / 4] = 0;
+\t\t\tprintf("SWEET WDT: disabled APSS HW watchdog at 0x17817000\\n");
+\t\t}
+\t}
+\tif (sweet_wdt_ptr) {
+\t\tsweet_wdt_ptr[0x08 / 4] = 0;
+\t\tsweet_wdt_ptr[0x04 / 4] = 1;
+\t}
 }
 
 extern void delay(int);
@@ -88,58 +107,82 @@ extern void sweet_log_wakeup(void);
 extern void sweet_log_append(const char *c, int size);
 extern boolean_t sweet_ufs_lock_is_free(void);
 _Atomic uint64_t sweet_vtimer_ticks = 0;
+static volatile uint32_t sweet_hb_seconds = 0;
+static int sweet_sample_chan;
+
+static void
+sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
+{
+\tif (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
+\t\tstrlcpy(sweet_sample_names, "lsd,containermanagerd,SpringBoard,backboardd", sizeof(sweet_sample_names));
+\t}
+\tif (sweet_sample_names[0] == '-') {
+\t\treturn;
+\t}
+\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 3 * hz);
+\tfor (int i = 0; i < 60; i++) {
+\t\tprintf("SMP --- sample %d (hb=%us)\\n", i, sweet_hb_seconds);
+\t\tproc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, sweet_sample_proc, NULL, NULL, NULL);
+\t\tsweet_log_wakeup();
+\t\t(void)tsleep(&sweet_sample_chan, PZERO, "sweetsmp", 5 * hz);
+\t}
+}
 
 static void
 sweet_hb_thread(__unused void *arg, __unused wait_result_t wr)
 {
-	uint32_t s = 0;
-	uint64_t last_pct = 0, last_vt = 0;
-	sweet_pet_hw_watchdog();
-	__asm__ volatile("mrs %0, cntpct_el0" : "=r"(last_pct));
-	last_vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
+\tuint32_t s = 0;
+\tuint64_t last_pct = 0, last_vt = 0;
+\tsweet_pet_hw_watchdog();
+\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(last_pct));
+\tlast_vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
 
-	while (1) {
-		uint64_t target_pct = last_pct + 19200000ull;
-		while (1) {
-			uint64_t now_pct = 0;
-			__asm__ volatile("mrs %0, cntpct_el0" : "=r"(now_pct));
-			if (now_pct >= target_pct) {
-				break;
-			}
-			for (volatile int i = 0; i < 5000; i++) {
-				__asm__ volatile("yield" ::: "memory");
-			}
-		}
-		s++;
-		sweet_fb_indicator(s);
-		sweet_pet_hw_watchdog();
+\twhile (1) {
+\t\tuint64_t target_pct = last_pct + 19200000ull;
+\t\twhile (1) {
+\t\t\tuint64_t now_pct = 0;
+\t\t\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(now_pct));
+\t\t\tif (now_pct >= target_pct) {
+\t\t\t\tbreak;
+\t\t\t}
+\t\t\tfor (volatile int i = 0; i < 5000; i++) {
+\t\t\t\t__asm__ volatile("yield" ::: "memory");
+\t\t\t}
+\t\t}
+\t\ts++;
+\t\tsweet_hb_seconds = s;
+\t\tsweet_fb_indicator(s);
+\t\tsweet_pet_hw_watchdog();
 
-		uint64_t pct = 0;
-		__asm__ volatile("mrs %0, cntpct_el0" : "=r"(pct));
-		uint64_t vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
-		uint64_t mpidr = 0;
-		__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-		uint32_t cpuid = (uint32_t)(mpidr & 0xFF);
-		uint64_t d_pct = pct - last_pct;
-		uint64_t d_vt = vt - last_vt;
-		last_pct = pct;
-		last_vt = vt;
+\t\tuint64_t pct = 0;
+\t\t__asm__ volatile("mrs %0, cntpct_el0" : "=r"(pct));
+\t\tuint64_t vt = os_atomic_load(&sweet_vtimer_ticks, relaxed);
+\t\tuint64_t mpidr = 0;
+\t\t__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+\t\tuint32_t cpuid = (uint32_t)(mpidr & 0xFF);
+\t\tuint64_t d_pct = pct - last_pct;
+\t\tuint64_t d_vt = vt - last_vt;
+\t\tlast_pct = pct;
+\t\tlast_vt = vt;
 
-		char hb_buf[160];
-		int hb_len = snprintf(hb_buf, sizeof(hb_buf),
-		    "SWEET HB %us (cpu=%u, pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
-		    s, cpuid,
-		    (unsigned long long)pct, (unsigned long long)d_pct,
-		    (unsigned long long)vt, (unsigned long long)d_vt,
-		    sweet_ufs_lock_is_free() ? "free" : "LOCKED");
-		if (hb_len > 0) {
-			sweet_log_append(hb_buf, hb_len);
-		}
-		sweet_log_wakeup();
-	}
+\t\tchar hb_buf[160];
+\t\tint hb_len = snprintf(hb_buf, sizeof(hb_buf),
+\t\t    "SWEET HB %us (cpu=%u, pct=%llu +%llu, vt=%llu +%llu, ufs=%s)\\n",
+\t\t    s, cpuid,
+\t\t    (unsigned long long)pct, (unsigned long long)d_pct,
+\t\t    (unsigned long long)vt, (unsigned long long)d_vt,
+\t\t    sweet_ufs_lock_is_free() ? "free" : "LOCKED");
+\t\tif (hb_len > 0) {
+\t\t\tsweet_log_append(hb_buf, hb_len);
+\t\t}
+\t\tsweet_log_wakeup();
+\t\tif ((s % 5) == 0 || s >= 20) {
+\t\t\twakeup(&sweet_sample_chan);
+\t\t}
+\t}
 }'''
-        assert old_hb in c, "old_hb not found in sweet_sample.c!"
-        c = c.replace(old_hb, new_hb)
+        assert old_sample_block in c, "old_sample_block not found in sweet_sample.c!"
+        c = c.replace(old_sample_block, new_sample_block)
         with open(sample_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(c)
         print("[+] sweet_sample.c modified")
