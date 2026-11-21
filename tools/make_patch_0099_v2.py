@@ -26,7 +26,23 @@ def main():
         with open(sample_path, 'r', encoding='utf-8') as f:
             c = f.read()
 
-        old_sample_block = '''static int sweet_sample_chan;
+        old_sample_block = '''extern void sweet_sample_task(const char *name, int pid, task_t task);  /* osfmk/kern/exception.c */
+
+static int
+sweet_sample_proc(proc_t p, __unused void *arg)
+{
+\tchar name[32];
+\tproc_name(proc_pid(p), name, sizeof(name));
+\tif (sweet_sample_wanted(name)) {
+\t\ttask_t task = proc_task(p);
+\t\tif (task != TASK_NULL) {
+\t\t\tsweet_sample_task(name, proc_pid(p), task);
+\t\t}
+\t}
+\treturn PROC_RETURNED;
+}
+
+static int sweet_sample_chan;
 
 static void
 sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
@@ -78,7 +94,7 @@ sweet_fb_indicator(uint32_t s)
 \t\tuint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
 \t\tfor (int y = 10; y < 40; y++) {
 \t\t\tfor (int x = 1040; x < 1070; x++) {
-\t\t\tsweet_fb_ptr[y * 1080 + x] = color;
+\t\t\t\tsweet_fb_ptr[y * 1080 + x] = color;
 \t\t\t}
 \t\t}
 \t}
@@ -102,6 +118,17 @@ sweet_pet_hw_watchdog(void)
 \t}
 }
 
+static int
+sweet_sample_proc(proc_t p, __unused void *arg)
+{
+\tchar name[32];
+\tproc_name(proc_pid(p), name, sizeof(name));
+\tif (sweet_sample_wanted(name)) {
+\t\tprintf("SMP %s[%d] alive\\n", name, proc_pid(p));
+\t}
+\treturn PROC_RETURNED;
+}
+
 extern void delay(int);
 extern void sweet_log_wakeup(void);
 extern void sweet_log_append(const char *c, int size);
@@ -114,7 +141,7 @@ static void
 sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
 {
 \tif (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
-\t\tstrlcpy(sweet_sample_names, "lsd,containermanagerd,SpringBoard,backboardd", sizeof(sweet_sample_names));
+\t\tstrlcpy(sweet_sample_names, "lsd,containermanager,containermanagerd,SpringBoard,backboardd", sizeof(sweet_sample_names));
 \t}
 \tif (sweet_sample_names[0] == '-') {
 \t\treturn;
@@ -540,6 +567,42 @@ keys_wait(void)
         with open(keys_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(c)
         print("[+] sweet_keys.c modified")
+
+        # 5. Modify sweet_early.c
+        early_path = os.path.join(tree, 'osfmk', 'arm64', 'sweet_early.c')
+        with open(early_path, 'r', encoding='utf-8') as f:
+            ec = f.read()
+
+        old_early_panic = '''void
+sweet_early_panic(const char *fmt, va_list *args)
+{
+\tif (early_disabled || early_panicking) {
+\t\treturn;
+\t}'''
+
+        new_early_panic = '''void
+sweet_early_panic(const char *fmt, va_list *args)
+{
+\tvolatile uint32_t *fb = early_fb;
+\tif (!fb) {
+\t\tfb = (volatile uint32_t *)(uintptr_t)0x9c000000;
+\t}
+\tif (fb) {
+\t\tfor (unsigned int y = 10; y < 40; y++) {
+\t\t\tfor (unsigned int x = 1040; x < 1070; x++) {
+\t\t\t\tfb[y * EARLY_STRIDE + x] = 0x00FF0000u; /* RED */
+\t\t\t}
+\t\t}
+\t\t__asm__ volatile("dsb sy; isb" ::: "memory");
+\t}
+\tif (early_disabled || early_panicking) {
+\t\treturn;
+\t}'''
+        assert old_early_panic in ec, 'old_early_panic not found in sweet_early.c!'
+        ec = ec.replace(old_early_panic, new_early_panic)
+        with open(early_path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(ec)
+        print("[+] sweet_early.c modified")
 
         # Generate git diff
         diff = subprocess.check_output(['git', 'diff'], cwd=tree, text=True)

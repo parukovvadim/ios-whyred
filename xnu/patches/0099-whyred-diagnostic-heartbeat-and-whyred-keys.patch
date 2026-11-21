@@ -30,13 +30,14 @@ index a148608..051efd6 100644
  
  static void
 diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
-index ad0b672..89d1dc7 100644
+index ad0b672..33370e5 100644
 --- a/bsd/dev/sweet_sample.c
 +++ b/bsd/dev/sweet_sample.c
-@@ -63,41 +63,117 @@ sweet_sample_proc(proc_t p, __unused void *arg)
- 	return PROC_RETURNED;
+@@ -47,7 +47,41 @@ sweet_sample_wanted(const char *name)
+ 	return false;
  }
  
+-extern void sweet_sample_task(const char *name, int pid, task_t task);  /* osfmk/kern/exception.c */
 +static volatile uint32_t *sweet_fb_ptr = NULL;
 +static void
 +sweet_fb_indicator(uint32_t s)
@@ -49,7 +50,7 @@ index ad0b672..89d1dc7 100644
 +		uint32_t color = (s & 1) ? 0x00FF00u : 0x0000FFu;
 +		for (int y = 10; y < 40; y++) {
 +			for (int x = 1040; x < 1070; x++) {
-+			sweet_fb_ptr[y * 1080 + x] = color;
++				sweet_fb_ptr[y * 1080 + x] = color;
 +			}
 +		}
 +	}
@@ -72,7 +73,22 @@ index ad0b672..89d1dc7 100644
 +		sweet_wdt_ptr[0x04 / 4] = 1;
 +	}
 +}
-+
+ 
+ static int
+ sweet_sample_proc(proc_t p, __unused void *arg)
+@@ -55,49 +89,86 @@ sweet_sample_proc(proc_t p, __unused void *arg)
+ 	char name[32];
+ 	proc_name(proc_pid(p), name, sizeof(name));
+ 	if (sweet_sample_wanted(name)) {
+-		task_t task = proc_task(p);
+-		if (task != TASK_NULL) {
+-			sweet_sample_task(name, proc_pid(p), task);
+-		}
++		printf("SMP %s[%d] alive\n", name, proc_pid(p));
+ 	}
+ 	return PROC_RETURNED;
+ }
+ 
 +extern void delay(int);
 +extern void sweet_log_wakeup(void);
 +extern void sweet_log_append(const char *c, int size);
@@ -86,7 +102,7 @@ index ad0b672..89d1dc7 100644
  {
  	if (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
 -		strlcpy(sweet_sample_names, "SpringBoard,backboardd,launchd,lsd,containermanagerd", sizeof(sweet_sample_names));
-+		strlcpy(sweet_sample_names, "lsd,containermanagerd,SpringBoard,backboardd", sizeof(sweet_sample_names));
++		strlcpy(sweet_sample_names, "lsd,containermanager,containermanagerd,SpringBoard,backboardd", sizeof(sweet_sample_names));
  	}
  	if (sweet_sample_names[0] == '-') {
  		return;
@@ -319,3 +335,26 @@ index 59fb51c..bdbc49e 100644
  	}
  }
  
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 6928957..91f5215 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -112,6 +112,18 @@ sweet_early_mark(unsigned int stage, const char *label)
+ void
+ sweet_early_panic(const char *fmt, va_list *args)
+ {
++	volatile uint32_t *fb = early_fb;
++	if (!fb) {
++		fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
++	}
++	if (fb) {
++		for (unsigned int y = 10; y < 40; y++) {
++			for (unsigned int x = 1040; x < 1070; x++) {
++				fb[y * EARLY_STRIDE + x] = 0x00FF0000u; /* RED */
++			}
++		}
++		__asm__ volatile("dsb sy; isb" ::: "memory");
++	}
+ 	if (early_disabled || early_panicking) {
+ 		return;
+ 	}
