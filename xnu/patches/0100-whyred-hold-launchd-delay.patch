@@ -1,0 +1,20 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1107,6 +1107,17 @@
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
+ 
++	uint32_t sweet_init_delay = 0;
++	if (PE_parse_boot_argn("sweet_init_delay", &sweet_init_delay, sizeof(sweet_init_delay)) && sweet_init_delay > 0) {
++		printf("SWEET BSD: sweet_init_delay=%u: HOLDING launchd for %u seconds\n", sweet_init_delay, sweet_init_delay);
++		static int sweet_init_delay_chan;
++		for (uint32_t s = 0; s < sweet_init_delay; s++) {
++			(void)tsleep(&sweet_init_delay_chan, PZERO, "sweetdelay", 1 * hz);
++			printf("SWEET BSD: launchd held, %u/%u s elapsed\n", s + 1, sweet_init_delay);
++		}
++		printf("SWEET BSD: delay finished! Proceeding to load_init_program(p)...\n");
++	}
++
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }
