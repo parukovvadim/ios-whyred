@@ -59,6 +59,7 @@ def main():
 					size_t len = comma ? (size_t)(comma - sb) : strlen(sb);
 					if (len == nlen && strncmp(sb, p->p_name, len) == 0) {
 						printf("SWEET EXEC: BLOCKED %s per sweet_block boot-arg\\n", p->p_name);
+						signature_failure_reason = os_reason_create(OS_REASON_EXEC, EXEC_EXIT_REASON_WRONG_PLATFORM);
 						error = EPERM;
 						goto done;
 					}
